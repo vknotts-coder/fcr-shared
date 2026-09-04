@@ -4,7 +4,7 @@ Shared code for the FCR platform (the `robert83976/fcr-*` app fleet). One place 
 one version to bump — the antidote to the copy-pasted-and-drifted `auth`/`session`/`rbac`
 code the fleet grew. Tracked by epic **robert83976/fcr-dispatch#59** (Slice C/D).
 
-## Consume it (git-URL, no registry)
+## Consume it (public HTTPS tarball, no registry, no token)
 
 This repo is **public**, so apps consume it as a plain **HTTPS tag tarball** — anonymous,
 no registry, no token, works on local builds, GitHub Actions CI, and Vercel alike:
