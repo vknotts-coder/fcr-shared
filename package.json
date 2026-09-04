@@ -1,0 +1,27 @@
+{
+  "name": "@fcr/core",
+  "version": "0.1.0",
+  "description": "Shared FCR platform code — RBAC engine + frozen contracts. Consumed by the fcr-* apps via git-URL (github:vknotts-coder/fcr-shared#<tag>). See fcr-dispatch#59 (fleet shared-package epic).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "default": "./dist/contracts/index.js"
+    },
+    "./rbac": {
+      "types": "./dist/rbac/index.d.ts",
+      "default": "./dist/rbac/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
