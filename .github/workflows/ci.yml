@@ -1,0 +1,29 @@
+name: CI
+
+# Build + test the shared package on every PR and on push to main. Since fcr-* apps
+# consume @fcr/core as a prebuilt tarball, this is where its RBAC engine + contracts
+# get their coverage — a green tag here is the guarantee the fleet depends on.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck + emit dist
+        run: npm run build
+      - name: Unit tests (can() + loadPrincipalGrants)
+        run: npm test
