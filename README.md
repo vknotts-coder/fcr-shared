@@ -6,17 +6,22 @@ code the fleet grew. Tracked by epic **robert83976/fcr-dispatch#59** (Slice C/D)
 
 ## Consume it (git-URL, no registry)
 
-FCR apps deploy **prebuilt locally** (`vercel build --prebuilt`), so `npm install` runs on
-your machine with your GitHub creds — a git-URL dependency needs no registry or Vercel token:
+This repo is **public**, so apps consume it as a plain **HTTPS tag tarball** — anonymous,
+no registry, no token, works on local builds, GitHub Actions CI, and Vercel alike:
 
 ```jsonc
 // package.json
 "dependencies": {
-  "@fcr/core": "github:vknotts-coder/fcr-shared#v0.1.0"
+  "@fcr/core": "https://github.com/vknotts-coder/fcr-shared/archive/refs/tags/v0.1.0.tar.gz"
 }
 ```
 
-Pin a **tag** (a released version), never a branch. Bump = a new tag here + bump the range in each app.
+Pin a **tag** (a released version), never a branch. Bump = a new tag here + bump the URL in each app.
+
+> Why the tarball and not `github:…#tag`: npm normalizes the `github:` shortcut to `git+ssh://`
+> in the lockfile, and SSH needs a key even for a public repo — so remote builders (GH Actions,
+> Vercel), which authenticate only to their own repo, fail to fetch it. The HTTPS tarball is
+> anonymous and needs zero wiring across the fleet. (Committed `dist/` is included in the tag tarball.)
 
 ## Exports
 
