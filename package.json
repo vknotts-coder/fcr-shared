@@ -1,7 +1,7 @@
 {
   "name": "@fcr/core",
-  "version": "0.1.1",
-  "description": "Shared FCR platform code — RBAC engine + frozen contracts. Consumed by the fcr-* apps via git-URL (github:vknotts-coder/fcr-shared#<tag>). See fcr-dispatch#59 (fleet shared-package epic).",
+  "version": "0.2.0",
+  "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
   "exports": {
@@ -12,6 +12,10 @@
     "./rbac": {
       "types": "./dist/rbac/index.d.ts",
       "default": "./dist/rbac/index.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "default": "./dist/session/index.js"
     }
   },
   "files": [
@@ -23,7 +27,12 @@
     "clean": "rm -rf dist"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "iron-session": "^8.0.4",
     "typescript": "^5.6.0",
     "vitest": "^4.1.11"
+  },
+  "peerDependencies": {
+    "iron-session": ">=8"
   }
 }
