@@ -68,3 +68,66 @@ export interface Decision {
   allowed: boolean;
   reason: string;
 }
+
+// ── Event log (#5 Slice 2 / fcr-dispatch#59 Slice 5) ────────────────────────────────
+// The FROZEN interface for the platform's append-only event log, lifted here from
+// fcr-dispatch/fcr-trailers src/contracts/events.ts (which explicitly planned this move
+// once distribution was decided). Everything that writes through the chokepoint speaks
+// this shape; the status engine + rule engine read it. Post-freeze changes are
+// ADDITIVE-ONLY and version-bumped. Modelling (#20): one row PER CHANGED FIELD, grouped
+// by `correlationId`, so a multi-field action is reconstructable and IsChanged-style
+// queries stay clean.
+
+/** How a write reached the chokepoint. */
+export type EventSource = "app" | "sf-forward-sync" | "rule-engine" | "system";
+
+/** One field's before/after. `before`/`after` are stored as jsonb (any JSON value). */
+export interface FieldChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+/** What a caller passes to `eventInsert` / `commitWithEvent`.
+ *
+ * A resource is identified by EITHER `resourceId` (a uuid, for uuid-keyed tables) OR
+ * `resourceKey` (a text key, for text-identity tables — e.g. compliance_filing,
+ * driver_status). At least one MUST be present (enforced in eventInsert). */
+export interface EventInput {
+  /** How the write originated. */
+  source: EventSource;
+  /** The kind of resource — e.g. "truck" | "trailer" | "customer" | "compliance_filing". */
+  resourceType: string;
+  /** The fcr_core row id (uuid) the event is about — for uuid-keyed resources. */
+  resourceId?: string;
+  /** A text identity for resources with no uuid (e.g. a driver_key). */
+  resourceKey?: string;
+  /** What happened — e.g. "create" | "update" | "delete" | "status_change". */
+  action: string;
+  /** Who did it. `id` resolves to the user table later; `label` is a human fallback. */
+  actor?: { id?: string; label?: string };
+  /** 0..n field-level diffs. Empty ⇒ a single action-only event row (field NULL). */
+  changes?: FieldChange[];
+  /** Free-form context (request id, rule id, …). */
+  metadata?: Record<string, unknown>;
+  /** Supply to group this event with sibling writes; otherwise one is generated. */
+  correlationId?: string;
+}
+
+/** A row as persisted in fcr_core.event_log. */
+export interface EventRow {
+  id: string;
+  occurredAt: string;
+  correlationId: string;
+  actorId: string | null;
+  actorLabel: string | null;
+  source: EventSource;
+  resourceType: string;
+  resourceId: string | null;
+  resourceKey: string | null;
+  action: string;
+  field: string | null;
+  before: unknown;
+  after: unknown;
+  metadata: Record<string, unknown> | null;
+}
