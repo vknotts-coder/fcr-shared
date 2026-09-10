@@ -1,7 +1,7 @@
 {
   "name": "@fcr/core",
-  "version": "0.3.0",
-  "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
+  "version": "0.4.0",
+  "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config + event-log write chokepoint. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
   "exports": {
@@ -16,6 +16,10 @@
     "./session": {
       "types": "./dist/session/index.d.ts",
       "default": "./dist/session/index.js"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "default": "./dist/events/index.js"
     },
     "./reports": {
       "types": "./dist/reports/index.d.ts",
