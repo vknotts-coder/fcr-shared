@@ -166,14 +166,18 @@ export async function eventInsert(input, mutation) {
         `WHERE EXISTS (SELECT 1 FROM upd)`;
     return { text, params, correlationId };
 }
+// ── commit: run the built statement through an INJECTED db ────────────────────────────
 /**
  * The sanctioned way to write through the event-log chokepoint: build the gated
- * mutation+event statement and run it via `exec` as ONE atomic statement, so the mutation
- * and its event commit or roll back together. Do any read-then-decide (the before-image)
- * BEFORE calling this — the statement itself is not interactive.
+ * mutation+event statement and run it via the injected `db` as ONE atomic statement, so the
+ * mutation and its event commit or roll back together. Do any read-then-decide (the
+ * before-image) BEFORE calling this — the statement itself is not interactive.
+ *
+ * `db` is the SAME `Queryable` seam @fcr/core/rbac + /reports inject — the app passes its
+ * `pool()` (or neon `sql()`); the query result is ignored here.
  */
-export async function commitWithEvent(input, mutation, exec) {
+export async function commitWithEvent(input, mutation, db) {
     const { text, params, correlationId } = await eventInsert(input, mutation);
-    await exec(text, params);
+    await db.query(text, params);
     return { correlationId };
 }

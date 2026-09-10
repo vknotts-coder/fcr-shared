@@ -65,13 +65,17 @@ describe("eventInsert — gated statement + validator gate", () => {
   });
 });
 
-describe("commitWithEvent — injected executor", () => {
-  it("runs the built statement through the injected exec and returns the correlation id", async () => {
-    const calls: { text: string; params: unknown[] }[] = [];
-    const exec = async (text: string, params: unknown[]) => {
-      calls.push({ text, params });
+describe("commitWithEvent — injected Queryable", () => {
+  it("runs the built statement through the injected db.query and returns the correlation id", async () => {
+    const calls: { text: string; params?: unknown[] }[] = [];
+    // The same Queryable seam rbac/reports inject — a pool()/sql() satisfies it structurally.
+    const db = {
+      async query<T = unknown>(text: string, params?: unknown[]): Promise<{ rows: T[] }> {
+        calls.push({ text, params });
+        return { rows: [] };
+      },
     };
-    const { correlationId } = await commitWithEvent(base("ok"), mutation, exec);
+    const { correlationId } = await commitWithEvent(base("ok"), mutation, db);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.text).toMatch(/INSERT INTO fcr_core\.event_log/);
     expect(correlationId).toBeTruthy();

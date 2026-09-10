@@ -1,4 +1,5 @@
 import type { EventInput, FieldChange } from "../contracts/index.js";
+import type { Queryable } from "../rbac/index.js";
 export declare function normStr(v: unknown): string | null;
 export declare function toNum(v: unknown): number | null;
 export interface DiffOptions {
@@ -46,16 +47,16 @@ export declare function eventInsert(input: EventInput, mutation: Mutation): Prom
     params: unknown[];
     correlationId: string;
 }>;
-/** Runs the built (text, params) statement. Inject the app's query fn — e.g. neon's
- *  `(t, p) => sql().query(t, p)`. The package stays DB-agnostic; the return is ignored. */
-export type SqlExecutor = (text: string, params: unknown[]) => Promise<unknown>;
 /**
  * The sanctioned way to write through the event-log chokepoint: build the gated
- * mutation+event statement and run it via `exec` as ONE atomic statement, so the mutation
- * and its event commit or roll back together. Do any read-then-decide (the before-image)
- * BEFORE calling this — the statement itself is not interactive.
+ * mutation+event statement and run it via the injected `db` as ONE atomic statement, so the
+ * mutation and its event commit or roll back together. Do any read-then-decide (the
+ * before-image) BEFORE calling this — the statement itself is not interactive.
+ *
+ * `db` is the SAME `Queryable` seam @fcr/core/rbac + /reports inject — the app passes its
+ * `pool()` (or neon `sql()`); the query result is ignored here.
  */
-export declare function commitWithEvent(input: EventInput, mutation: Mutation, exec: SqlExecutor): Promise<{
+export declare function commitWithEvent(input: EventInput, mutation: Mutation, db: Queryable): Promise<{
     correlationId: string;
 }>;
 //# sourceMappingURL=index.d.ts.map
