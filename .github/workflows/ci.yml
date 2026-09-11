@@ -23,7 +23,20 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - name: Typecheck + emit dist
-        run: npm run build
+      # Clean FIRST so the guard below catches a deleted-source orphan (tsc emits, never prunes) as well
+      # as edits — the committed dist must be exactly what a from-scratch build of this src produces.
+      - name: Typecheck + emit dist (from clean)
+        run: npm run clean && npm run build
+      # Consumers run the COMMITTED dist/* (package.json "exports"/"files"), while the tests import src/*
+      # — so a stale, hand-edited, missing, or orphaned dist ships behavior the suite never exercised.
+      # `git status --porcelain` (not `git diff`) is required: it also reports UNTRACKED files, so a new
+      # module whose dist was never committed, and a deleted module's orphaned dist, both fail here.
+      - name: dist is in sync with src (no stale/missing/orphaned committed dist)
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            echo "::error::committed dist/ is out of sync — run 'npm run clean && npm run build' and commit dist/"
+            git status --porcelain -- dist
+            exit 1
+          fi
       - name: Unit tests (can() + loadPrincipalGrants)
         run: npm test
