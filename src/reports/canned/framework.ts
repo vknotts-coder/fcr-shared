@@ -6,10 +6,8 @@
 // Each report is registered in ./index.ts. All are admin-only + REPORTS_LIVE-gated at the route; v1 shows
 // admins everything (field-gating is S5).
 
-import type { FieldType } from "../definition.js";
+import { isNumericType, type FieldType } from "../definition.js";
 import type { CellValue, ReportColumn, TabularResult } from "../runner.js";
-
-const NUMERIC: ReadonlySet<FieldType> = new Set(["number", "money"]);
 
 /** Format a date/timestamp CellValue to its yyyy-mm-dd head (shared by the readers). Null/empty → "". */
 export const toDateOnly = (v: string | Date | null): string =>
@@ -33,7 +31,7 @@ export function tabular(object: string, cols: CannedColumn[], rows: Record<strin
     key: c.key,
     label: c.label,
     type: c.type,
-    numeric: c.numeric ?? NUMERIC.has(c.type),
+    numeric: c.numeric ?? isNumericType(c.type),
   }));
   return {
     mode: "tabular",

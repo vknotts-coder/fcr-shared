@@ -5,7 +5,7 @@
 // (canned reports have no saved definition, so they can't use the definition-driven /reports/export path).
 // Each report is registered in ./index.ts. All are admin-only + REPORTS_LIVE-gated at the route; v1 shows
 // admins everything (field-gating is S5).
-const NUMERIC = new Set(["number", "money"]);
+import { isNumericType } from "../definition.js";
 /** Format a date/timestamp CellValue to its yyyy-mm-dd head (shared by the readers). Null/empty → "". */
 export const toDateOnly = (v) => v == null ? "" : (typeof v === "string" ? v : v.toISOString()).slice(0, 10);
 /** Coerce a numeric-or-numeric-string (Postgres numerics arrive as strings) to a number CellValue; null → null. */
@@ -21,7 +21,7 @@ export function tabular(object, cols, rows) {
         key: c.key,
         label: c.label,
         type: c.type,
-        numeric: c.numeric ?? NUMERIC.has(c.type),
+        numeric: c.numeric ?? isNumericType(c.type),
     }));
     return {
         mode: "tabular",

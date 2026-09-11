@@ -1,4 +1,4 @@
-import type { FieldType } from "../definition.js";
+import { type FieldType } from "../definition.js";
 import type { CellValue, TabularResult } from "../runner.js";
 /** Format a date/timestamp CellValue to its yyyy-mm-dd head (shared by the readers). Null/empty → "". */
 export declare const toDateOnly: (v: string | Date | null) => string;

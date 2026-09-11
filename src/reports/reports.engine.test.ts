@@ -82,3 +82,75 @@ describe("the injection floor — identifiers from the registry, values bound as
     expect(q.sql).toContain("deleted_at IS NULL AND is_test = false"); // baseWhere always applied
   });
 });
+
+describe("filterLogic — no orphan bind params when a filter is omitted (#103 defect 1)", () => {
+  // The bind count Postgres requires is the HIGHEST $N in the SQL; supplying MORE values than that (an
+  // orphan, from a filter the logic string doesn't reference) makes Postgres reject the bind and the run
+  // fail generically. So the invariant is: params.length === max($N) in the emitted SQL.
+  const maxPlaceholder = (sql: string) => Math.max(0, ...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+  const build = (def: object) => {
+    const v = validateReport(def, admin, catalog);
+    expect(v.ok).toBe(true);
+    if (!v.ok) throw new Error(v.errors.join("; "));
+    const fieldsByKey = new Map(v.obj.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    return buildTabularQuery(v.obj, v.def, fieldsByKey, admin);
+  };
+
+  it("omitting the TRAILING filter (3 filters, logic '1 AND 2') binds only the referenced params", () => {
+    const q = build({
+      object: "widget",
+      columns: ["name"],
+      filters: [
+        { field: "name", op: "eq", value: "a" },
+        { field: "status", op: "eq", value: "open" },
+        { field: "cost", op: "eq", value: "5" }, // NOT referenced by the logic → must push no param
+      ],
+      filterLogic: "1 AND 2",
+      summaries: [],
+    });
+    expect(q.params.length).toBe(maxPlaceholder(q.sql)); // no orphan
+    expect(q.params).toEqual(["a", "open"]);
+    expect(q.params).not.toContain(5); // the omitted filter's value is not bound
+  });
+
+  it("logic '1' with 2 filters binds only the first (regression on the minimal repro)", () => {
+    const q = build({
+      object: "widget",
+      columns: ["name"],
+      filters: [
+        { field: "name", op: "eq", value: "a" },
+        { field: "status", op: "eq", value: "open" },
+      ],
+      filterLogic: "1",
+      summaries: [],
+    });
+    expect(q.params.length).toBe(maxPlaceholder(q.sql));
+    expect(q.params).toEqual(["a"]);
+  });
+
+  it("a filter referenced twice ('1 AND 1') is built once — one param, one $N", () => {
+    const q = build({
+      object: "widget",
+      columns: ["name"],
+      filters: [{ field: "status", op: "eq", value: "open" }],
+      filterLogic: "1 AND 1",
+      summaries: [],
+    });
+    expect(q.params).toEqual(["open"]);
+    expect(q.params.length).toBe(maxPlaceholder(q.sql));
+  });
+
+  it("no explicit logic (all filters AND'd) still binds every filter with matching placeholders", () => {
+    const q = build({
+      object: "widget",
+      columns: ["name"],
+      filters: [
+        { field: "name", op: "eq", value: "a" },
+        { field: "status", op: "eq", value: "open" },
+      ],
+      summaries: [],
+    });
+    expect(q.params).toEqual(["a", "open"]);
+    expect(q.params.length).toBe(maxPlaceholder(q.sql));
+  });
+});
