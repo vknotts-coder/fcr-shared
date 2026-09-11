@@ -166,30 +166,25 @@ export function buildWhere(obj, def, fieldsByKey, principal) {
     }
     // (2) The definition's filters, combined by the (validated) filter logic. Build a leaf — and its bound
     // params — ONLY for a filter the combining logic actually references, so an omitted filter never pushes
-    // an orphan param (params longer than the `$n` placeholders → Postgres rejects the bind). With no
-    // explicit filterLogic every filter is AND'd, so every filter is referenced and built.
+    // an orphan param (params longer than the `$n` placeholders → Postgres rejects the bind). Pass the
+    // AST-referenced set for an explicit filterLogic; omit it (⇒ build every filter) when the filters are
+    // simply AND'd. Push order is filter-order either way, so a leaf's `$n` always matches its slot in `p`.
+    const buildClauses = (referenced) => def.filters.map((fil, i) => {
+        if (referenced && !referenced.has(i + 1))
+            return null;
+        const meta = fieldsByKey.get(fil.field);
+        return meta ? filterLeaf(obj, meta, fil, p) : null;
+    });
     const logic = def.filterLogic?.trim();
     let userWhere = null;
     if (logic && def.filters.length) {
         const parsed = parseFilterLogic(logic, def.filters.length);
-        if (parsed.ok) {
-            const referenced = collectRefs(parsed.ast);
-            const clauses = def.filters.map((fil, i) => {
-                if (!referenced.has(i + 1))
-                    return null; // not in the logic tree → no leaf, no param pushed
-                const meta = fieldsByKey.get(fil.field);
-                return meta ? filterLeaf(obj, meta, fil, p) : null;
-            });
-            userWhere = logicToSql(parsed.ast, clauses);
-        }
+        if (parsed.ok)
+            userWhere = logicToSql(parsed.ast, buildClauses(collectRefs(parsed.ast)));
         // Unparseable filterLogic: apply no user filter (the validator rejects this before a run reaches here).
     }
     else {
-        const clauses = def.filters.map((fil) => {
-            const meta = fieldsByKey.get(fil.field);
-            return meta ? filterLeaf(obj, meta, fil, p) : null;
-        });
-        const present = clauses.filter((c) => !!c);
+        const present = buildClauses().filter((c) => !!c);
         userWhere = present.length === 0 ? null : present.length === 1 ? present[0] : `(${present.join(" AND ")})`;
     }
     if (userWhere)
