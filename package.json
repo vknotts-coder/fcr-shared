@@ -1,7 +1,7 @@
 {
   "name": "@fcr/core",
-  "version": "0.5.0",
-  "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config + event-log write chokepoint + global-search kernel. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
+  "version": "0.6.0",
+  "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
   "sideEffects": false,
@@ -37,6 +37,22 @@
     "./reports/csv": {
       "types": "./dist/reports/csv.d.ts",
       "default": "./dist/reports/csv.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog/index.d.ts",
+      "default": "./dist/catalog/index.js"
+    },
+    "./catalog/truck": {
+      "types": "./dist/catalog/truck.d.ts",
+      "default": "./dist/catalog/truck.js"
+    },
+    "./catalog/trailer": {
+      "types": "./dist/catalog/trailer.d.ts",
+      "default": "./dist/catalog/trailer.js"
+    },
+    "./catalog/listviews": {
+      "types": "./dist/catalog/listviews.d.ts",
+      "default": "./dist/catalog/listviews.js"
     }
   },
   "files": [
