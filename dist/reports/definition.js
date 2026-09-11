@@ -7,6 +7,13 @@
 //
 // Ported from the SC Shop report builder; the only change is the outer shape check — scshop used a zod
 // schema, this hand-rolls the same strict shape validation so the module stays dependency-free.
+/** The single source of truth for "is this a numeric column" — right-aligned + numeric-sorted in the
+ *  grid, summable in aggregates. Both the definition-driven runner and the canned-report framework consume
+ *  this so a future numeric type can't be added to one grid and forgotten in the other. */
+const NUMERIC_TYPES = new Set(["number", "money"]);
+export function isNumericType(type) {
+    return NUMERIC_TYPES.has(type);
+}
 // Single source of truth for the operator vocabulary: the FilterOperator union AND the runtime
 // membership Set (FILTER_OPERATORS, below) both derive from this one list, so adding an operator can't
 // silently desync them. (OPERATORS_BY_TYPE separately declares which of these are legal per field type.)
@@ -397,10 +404,20 @@ export function validateDefinition(raw, obj) {
     if (d.sort) {
         const meta = field(d.sort.field);
         const isSummaryKey = isSummary && (d.sort.field === d.groupBy?.field || d.summaries.some((s) => summaryKey(s) === d.sort.field));
-        if (!meta && !isSummaryKey)
-            errors.push(`unknown sort field: ${d.sort.field}`);
-        if (!isSummary && meta && !d.columns.includes(d.sort.field))
-            errors.push(`sort field must be a selected column: ${d.sort.field}`);
+        if (isSummary) {
+            // In summary mode the grouped result has ONLY the group column + the aggregate columns — a plain
+            // registry field has no column there, so the runner would silently ignore the sort and fall back to
+            // group-ascending. Require the sort to name the group field or a summary (mirrors the tabular branch,
+            // which requires a SELECTED column).
+            if (!isSummaryKey)
+                errors.push(`summary sort field must be the group-by field or a summary: ${d.sort.field}`);
+        }
+        else {
+            if (!meta)
+                errors.push(`unknown sort field: ${d.sort.field}`);
+            else if (!d.columns.includes(d.sort.field))
+                errors.push(`sort field must be a selected column: ${d.sort.field}`);
+        }
     }
     if (errors.length)
         return { ok: false, errors };

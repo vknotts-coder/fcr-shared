@@ -19,8 +19,7 @@
 // flagged `truncated`). Aggregating over the LEFT JOIN is safe because each registry join is many-to-one
 // (UNIQUE far-side key) and carries the base object's soft-delete/test-row exclusion in its ON clause.
 import { getObjectDef, toClientObject } from "./registry-core.js";
-import { validateDefinition, parseFilterLogic, summaryKey, REPORT_ROW_CAP, } from "./definition.js";
-const NUMERIC_TYPES = new Set(["number", "money"]);
+import { validateDefinition, parseFilterLogic, summaryKey, isNumericType, REPORT_ROW_CAP, } from "./definition.js";
 const GROUP_NONE = "(none)";
 const TIME_ZONE = "America/Chicago";
 // ── SQL identifier construction (registry paths ONLY — never user input) ─────────────────────────
@@ -131,6 +130,22 @@ function logicToSql(node, clauses) {
     const op = node.op === "and" ? "AND" : "OR";
     return `(${logicToSql(node.left, clauses)} ${op} ${logicToSql(node.right, clauses)})`;
 }
+/** The 1-indexed filter positions a parsed filter-logic tree actually references. buildWhere binds a param
+ *  ONLY for a filter that appears in the emitted SQL — an unreferenced filter (one the logic string omits)
+ *  would otherwise push an orphan param, leaving `params` longer than the `$n` placeholders in the query,
+ *  which Postgres rejects at bind time ("bind message supplies N parameters…"). A filter referenced twice
+ *  (e.g. "1 AND 1") is still built once, so its single param matches its single `$n`. */
+function collectRefs(node, out = new Set()) {
+    if (node.op === "num")
+        out.add(node.n);
+    else if (node.op === "not")
+        collectRefs(node.child, out);
+    else {
+        collectRefs(node.left, out);
+        collectRefs(node.right, out);
+    }
+    return out;
+}
 /**
  * The full WHERE: mandatory server-side scope (baseWhere + owner-scope) AND'd with the definition's
  * filters. Scope is applied here regardless of the definition — the security floor, not user-controllable.
@@ -149,19 +164,31 @@ export function buildWhere(obj, def, fieldsByKey, principal) {
     if (obj.ownerField && !seesAll) {
         and.push(`${ident(obj.key)}.${ident(obj.ownerField)} = ${p.push(principal.accountId)}`);
     }
-    // (2) The definition's filters, combined by the (validated) filter logic.
-    const clauses = def.filters.map((fil) => {
-        const meta = fieldsByKey.get(fil.field);
-        return meta ? filterLeaf(obj, meta, fil, p) : null;
-    });
+    // (2) The definition's filters, combined by the (validated) filter logic. Build a leaf — and its bound
+    // params — ONLY for a filter the combining logic actually references, so an omitted filter never pushes
+    // an orphan param (params longer than the `$n` placeholders → Postgres rejects the bind). With no
+    // explicit filterLogic every filter is AND'd, so every filter is referenced and built.
     const logic = def.filterLogic?.trim();
     let userWhere = null;
-    if (logic && clauses.length) {
-        const parsed = parseFilterLogic(logic, clauses.length);
-        if (parsed.ok)
+    if (logic && def.filters.length) {
+        const parsed = parseFilterLogic(logic, def.filters.length);
+        if (parsed.ok) {
+            const referenced = collectRefs(parsed.ast);
+            const clauses = def.filters.map((fil, i) => {
+                if (!referenced.has(i + 1))
+                    return null; // not in the logic tree → no leaf, no param pushed
+                const meta = fieldsByKey.get(fil.field);
+                return meta ? filterLeaf(obj, meta, fil, p) : null;
+            });
             userWhere = logicToSql(parsed.ast, clauses);
+        }
+        // Unparseable filterLogic: apply no user filter (the validator rejects this before a run reaches here).
     }
     else {
+        const clauses = def.filters.map((fil) => {
+            const meta = fieldsByKey.get(fil.field);
+            return meta ? filterLeaf(obj, meta, fil, p) : null;
+        });
         const present = clauses.filter((c) => !!c);
         userWhere = present.length === 0 ? null : present.length === 1 ? present[0] : `(${present.join(" AND ")})`;
     }
@@ -309,7 +336,7 @@ function buildTabular(obj, def, fieldsByKey, rows, truncated) {
     const columns = def.columns
         .map((k) => fieldsByKey.get(k))
         .filter((f) => !!f)
-        .map((f) => ({ key: f.key, label: f.label, type: f.type, numeric: NUMERIC_TYPES.has(f.type) }));
+        .map((f) => ({ key: f.key, label: f.label, type: f.type, numeric: isNumericType(f.type) }));
     const out = [];
     const hrefs = [];
     const linked = linkActive(obj); // per-run; matches the `__id` SELECT gate in buildTabularQuery

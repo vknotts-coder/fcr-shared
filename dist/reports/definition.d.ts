@@ -1,4 +1,5 @@
 export type FieldType = "string" | "number" | "money" | "date" | "boolean" | "enum";
+export declare function isNumericType(type: FieldType): boolean;
 export declare const ALL_OPERATORS: readonly ["eq", "neq", "contains", "gt", "gte", "lt", "lte", "isNull", "notNull", "in"];
 export type FilterOperator = (typeof ALL_OPERATORS)[number];
 /** Which operators are legal for each field type. The builder offers only these; the validator

@@ -3,7 +3,7 @@
 // field-level security floor. No DB, no registry. Ported from the SC Shop report-builder suite.
 
 import { describe, it, expect } from "vitest";
-import { validateDefinition, parseFilterLogic, type ClientReportObject } from "./definition.js";
+import { validateDefinition, parseFilterLogic, isNumericType, type ClientReportObject } from "./definition.js";
 
 const OBJ: ClientReportObject = {
   key: "truck",
@@ -170,5 +170,36 @@ describe("filter logic (Salesforce-style)", () => {
 
   it("validateDefinition rejects logic with no filters", () => {
     expect(validateDefinition({ ...base, filters: [], filterLogic: "1" }, OBJ).ok).toBe(false);
+  });
+});
+
+describe("sort validation", () => {
+  const summary = { object: "truck", columns: [], filters: [], groupBy: { field: "status" }, summaries: [{ field: "*", agg: "count" as const }] };
+
+  it("tabular: accepts a selected column, rejects an unselected/unknown one", () => {
+    expect(validateDefinition({ ...base, sort: { field: "total_sales", dir: "asc" } }, OBJ).ok).toBe(true); // in columns
+    expect(validateDefinition({ ...base, sort: { field: "status", dir: "asc" } }, OBJ).ok).toBe(false); // real field, not selected
+    expect(validateDefinition({ ...base, sort: { field: "nope", dir: "asc" } }, OBJ).ok).toBe(false); // unknown field
+  });
+
+  it("summary: accepts sorting by the group field or a summary key", () => {
+    expect(validateDefinition({ ...summary, sort: { field: "status", dir: "desc" } }, OBJ).ok).toBe(true); // group field
+    expect(validateDefinition({ ...summary, sort: { field: "count", dir: "desc" } }, OBJ).ok).toBe(true); // summary key
+  });
+
+  it("summary: REJECTS sorting by a real field that is neither the group nor a summary (#103 defect 2)", () => {
+    // pickup_driver is a valid registry field, but with groupBy:status + count it has no column in the
+    // grouped result — the runner would silently ignore the sort. Before the fix this passed validation.
+    const r = validateDefinition({ ...summary, sort: { field: "pickup_driver", dir: "asc" } }, OBJ);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join()).toMatch(/summary sort/);
+  });
+});
+
+describe("isNumericType — single source of truth (#103 defect 3)", () => {
+  it("is true for number/money and false for everything else", () => {
+    expect(isNumericType("number")).toBe(true);
+    expect(isNumericType("money")).toBe(true);
+    for (const t of ["string", "date", "boolean", "enum"] as const) expect(isNumericType(t)).toBe(false);
   });
 });
