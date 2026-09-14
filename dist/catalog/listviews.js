@@ -16,6 +16,8 @@
 // ── Filter helpers ───────────────────────────────────────────────────────────────────────────────
 const eq = (field, value) => ({ field, op: "eq", value });
 const neq = (field, value) => ({ field, op: "neq", value });
+const inList = (field, values) => ({ field, op: "in", value: values });
+const gte = (field, value) => ({ field, op: "gte", value });
 const isNull = (field) => ({ field, op: "isNull" });
 const notNull = (field) => ({ field, op: "notNull" });
 const sort = (field, dir = "asc") => ({ field, dir });
@@ -39,7 +41,11 @@ const TRAILER_STATUSES = [
     "Delivery Dispatch", "Delivered", "Total Loss", "REWORK", "Hold", "Do Not Repair",
 ];
 const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
-const TRAILER_COLS = ["sf_name", "full_vin", "status", "team", "notify_date", "arrival_date", "repair_goal", "estimated_hours", "completetion_percentage"];
+// The fcr-trailers "Repair Pipeline" columns (parity with the old bespoke TrailerTable): unit, customer,
+// status, days-in-status, type, team, invoice #, days-past-due. Requires the computed day-count fields.
+const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "invoice_1", "days_past_due"];
+// Statuses grouped as the old client presets did (scheduling = pre-repair queue).
+const TRAILER_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Parts Received"];
 // ── The catalog ───────────────────────────────────────────────────────────────────────────────────
 const TRUCK_VIEWS = [
     {
@@ -81,10 +87,25 @@ const TRAILER_VIEWS = [
         object: "trailer",
         label: "Trailers",
         group: "overview",
+        // The Repair Pipeline overview. Columns are the pipeline set (days-in-status / type / invoice # /
+        // days-past-due) rather than the earlier VIN/arrival/est-hours set — parity with the fcr-trailers list
+        // this replaces. Only affects a consumer on reports ≥ v0.7.0 (the computed columns); older pins are
+        // unaffected until they repin.
         description: "Every active trailer. Pick a status to narrow (any status, including delivered / total loss).",
-        columns: TRAILER_COLS,
-        defaultSort: sort("notify_date", "desc"),
+        columns: TRAILER_PIPELINE_COLS,
+        defaultSort: sort("days_in_status", "desc"),
         statusSelect: { options: TRAILER_STATUSES, activeExcludes: TRAILER_TERMINAL },
+    },
+    {
+        slug: "scheduling",
+        object: "trailer",
+        label: "Scheduling",
+        group: "overview",
+        description: "Approved and awaiting/received parts — the pre-repair scheduling queue.",
+        columns: TRAILER_PIPELINE_COLS,
+        defaultSort: sort("days_in_status", "desc"),
+        filters: [inList("status", TRAILER_SCHEDULING_STATUSES)],
+        filterLogic: null,
     },
     {
         slug: "wip",
@@ -96,6 +117,28 @@ const TRAILER_VIEWS = [
         defaultSort: sort("repair_start_date", "asc"),
         filters: [notNull("repair_start_date"), isNull("invoice_date"), neq("status", "Total Loss"), isNull("status")],
         filterLogic: "1 AND 2 AND (3 OR 4)",
+    },
+    {
+        slug: "to_invoice",
+        object: "trailer",
+        label: "To Invoice",
+        group: "overview",
+        description: "Closed trailers not yet invoiced (delivered / total loss / do not repair, invoice # blank).",
+        columns: TRAILER_PIPELINE_COLS,
+        defaultSort: sort("days_in_status", "desc"),
+        filters: [inList("status", TRAILER_TERMINAL), isNull("invoice_1")],
+        filterLogic: null,
+    },
+    {
+        slug: "past_due",
+        object: "trailer",
+        label: "Past Due",
+        group: "overview",
+        description: "Invoiced-and-unpaid trailers 30+ days past the invoice date.",
+        columns: TRAILER_PIPELINE_COLS,
+        defaultSort: sort("days_past_due", "desc"),
+        filters: [gte("days_past_due", "30")],
+        filterLogic: null,
     },
 ];
 export const LIST_VIEWS = [...TRUCK_VIEWS, ...TRAILER_VIEWS];

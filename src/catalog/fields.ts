@@ -32,3 +32,26 @@ export const dateF = (key: string, label: string, section: string, path?: string
 export const dateTzF = (key: string, label: string, section: string, path?: string): RegistryField => ({ ...dateF(key, label, section, path), dateTz: true });
 export const numF = (key: string, label: string, section: string, path?: string) => f("number", key, label, section, { path });
 export const money = (key: string, label: string, section: string, sensitive = true, path?: string) => f("money", key, label, section, { path, sensitive, groupable: false });
+
+// A COMPUTED field — maps to a registry-authored SQL `expr` instead of a column (see RegistryField.expr;
+// requires @fcr/core reports ≥ v0.7.0). `expr` is TRUSTED registry SQL, never user input; qualify columns
+// with the object's table alias (its key) or a join alias. Derived metrics default to NOT groupable /
+// NOT summable (a day-count sum is meaningless); override per case.
+export const computed = (
+  type: FieldType,
+  key: string,
+  label: string,
+  section: string,
+  expr: string,
+  opts: { filterable?: boolean; groupable?: boolean; summable?: boolean; sensitive?: boolean } = {},
+): RegistryField => ({
+  key,
+  label,
+  type,
+  section,
+  expr,
+  filterable: opts.filterable ?? true,
+  groupable: opts.groupable ?? false,
+  summable: opts.summable ?? false,
+  sensitive: opts.sensitive,
+});

@@ -67,13 +67,29 @@ describe("trailer object", () => {
     expect(keys).not.toContain("total_sales"); // truck-only
     expect(keys).not.toContain("shop"); // truck-only
   });
+
+  it("adds the repair-pipeline parity fields, incl. the computed day-counts (expr, no path)", () => {
+    const byKey = new Map(trailerFields.map((f) => [f.key, f]));
+    expect(byKey.get("type")?.path).toBe("type");
+    expect(byKey.get("invoice_1")?.path).toBe("invoice_1");
+    expect(byKey.get("fcr_collision_account")?.path).toBe("fcr_collision_account");
+    // computed: expr set, path absent, number type, filterable (past_due filters on it), not summable
+    const dpd = byKey.get("days_past_due")!;
+    expect(dpd.expr).toContain("invoice_paid_date IS NULL");
+    expect(dpd.path).toBeUndefined();
+    expect(dpd.type).toBe("number");
+    expect(dpd.filterable).toBe(true);
+    expect(dpd.summable).toBe(false);
+    expect(byKey.get("days_in_status")?.expr).toContain("status_date");
+    expect(byKey.get("days_in_status")?.path).toBeUndefined();
+  });
 });
 
 describe("list views", () => {
   it("has the truck + trailer views", () => {
     expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta"]);
-    expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "wip"]);
-    expect(LIST_VIEWS).toHaveLength(5);
+    expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "wip", "to_invoice", "past_due"]);
+    expect(LIST_VIEWS).toHaveLength(8);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
   });
 
@@ -98,5 +114,21 @@ describe("list views", () => {
     // default "All active": neq per terminal + isNull(status), OR-grouped
     expect(adef.filters.some((f) => f.op === "isNull" && f.field === "status")).toBe(true);
     expect(adef.filterLogic).toContain("OR");
+  });
+
+  it("the new trailer preset views build the right static filters", () => {
+    const pd = listViewDefinition(getListView("trailer", "past_due")!, getListView("trailer", "past_due")!.defaultSort);
+    expect(pd.filters).toEqual([{ field: "days_past_due", op: "gte", value: "30" }]);
+
+    const ti = getListView("trailer", "to_invoice")!;
+    const tidef = listViewDefinition(ti, ti.defaultSort);
+    expect(tidef.filters).toEqual([
+      { field: "status", op: "in", value: ["Delivered", "Total Loss", "Do Not Repair"] },
+      { field: "invoice_1", op: "isNull" },
+    ]);
+
+    const sc = getListView("trailer", "scheduling")!;
+    const scdef = listViewDefinition(sc, sc.defaultSort);
+    expect(scdef.filters).toEqual([{ field: "status", op: "in", value: ["Approved", "Awaiting Parts", "Parts Received"] }]);
   });
 });
