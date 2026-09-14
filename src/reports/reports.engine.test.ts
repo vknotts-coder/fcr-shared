@@ -39,6 +39,72 @@ const admin: Principal = {
 };
 const nobody: Principal = { username: "nobody", accountId: null, grants: [] };
 
+// A catalog with a COMPUTED (expr) field — the #107 Slice A capability.
+const gadget: RegistryObject = {
+  key: "gadget",
+  label: "Gadget",
+  table: "app.gadget",
+  baseWhere: "deleted_at IS NULL",
+  capability: () => true,
+  fields: [
+    { key: "name", label: "Name", type: "string", section: "identity", path: "name", filterable: true, groupable: true, summable: false },
+    // computed: registry-authored BARE SQL (the engine parenthesizes it), no `path`. Qualified with the object alias.
+    { key: "age_days", label: "Age (days)", type: "number", section: "identity", expr: "now()::date - gadget.created_at", filterable: true, groupable: false, summable: false },
+    // computed DATE field: still gets the calendar-date + TZ normalization a plain date column would.
+    { key: "due", label: "Due", type: "date", section: "identity", expr: "gadget.created_at + interval '30 days'", filterable: true, groupable: true, summable: false, dateTz: true },
+  ],
+};
+const gcatalog: RegistryObject[] = [gadget];
+
+describe("computed (expr) fields (#107 Slice A)", () => {
+  const EXPR = "(now()::date - gadget.created_at)"; // the engine wraps the bare expr once
+  const build = (def: object) => {
+    const v = validateReport(def, admin, gcatalog);
+    expect(v.ok).toBe(true);
+    if (!v.ok) throw new Error(v.errors.join("; "));
+    const fieldsByKey = new Map(v.obj.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    return buildTabularQuery(v.obj, v.def, fieldsByKey, admin);
+  };
+
+  it("emits the expr verbatim (parenthesized) in SELECT, aliased by key", () => {
+    const q = build({ object: "gadget", columns: ["name", "age_days"], filters: [], summaries: [] });
+    expect(q.sql).toContain(`${EXPR} AS "age_days"`);
+  });
+
+  it("filters a computed field with the VALUE bound as a param (injection floor holds)", () => {
+    const q = build({
+      object: "gadget",
+      columns: ["age_days"],
+      filters: [{ field: "age_days", op: "gte", value: "30" }],
+      summaries: [],
+    });
+    expect(q.sql).toContain(`${EXPR} >= $1`); // expr on the identifier side
+    expect(q.params).toEqual([30]); // the user value is bound + coerced, never in the SQL text
+    expect(q.sql).not.toContain("30");
+  });
+
+  it("sorts by a computed field (ORDER BY the expr)", () => {
+    const q = build({ object: "gadget", columns: ["age_days"], filters: [], sort: { field: "age_days", dir: "desc" }, summaries: [] });
+    expect(q.sql).toContain(`ORDER BY ${EXPR} DESC`);
+  });
+
+  it("a computed DATE field gets the same ::date + timezone normalization as a plain date column", () => {
+    const q = build({ object: "gadget", columns: ["due"], filters: [], summaries: [] });
+    // dateExpr wraps the (expr) with AT TIME ZONE (dateTz) + ::date, so it buckets in the report's tz.
+    expect(q.sql).toContain("gadget.created_at + interval '30 days'");
+    expect(q.sql).toContain("AT TIME ZONE 'America/Chicago'");
+    expect(q.sql).toMatch(/\)::date AS "due"/);
+  });
+
+  it("defence-in-depth: a field with neither path nor expr throws (registry bug), not silent bad SQL", () => {
+    // The discriminated union makes this a COMPILE error too — cast through to exercise the runtime guard.
+    const oops = { key: "oops", label: "Oops", type: "string", section: "identity", filterable: true, groupable: false, summable: false } as unknown as RegistryField;
+    const broken: RegistryObject = { ...gadget, fields: [oops] };
+    const fieldsByKey = new Map(broken.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    expect(() => buildTabularQuery(broken, { object: "gadget", columns: ["oops"], filters: [], summaries: [], filterLogic: null, groupBy: null, sort: null } as never, fieldsByKey, admin)).toThrow(/neither path nor expr/);
+  });
+});
+
 describe("registry-core over an injected catalog", () => {
   it("getObjectDef resolves a known key and undefined for an unknown one", () => {
     expect(getObjectDef(catalog, "widget")?.key).toBe("widget");

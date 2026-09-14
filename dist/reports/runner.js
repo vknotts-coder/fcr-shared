@@ -34,6 +34,8 @@ function ident(seg) {
 /** Column reference for a field's path. Own column ("status") → `"<base>"."status"`; one hop
  *  ("customer.sf_name") → `"customer"."sf_name"`. Split on a single "." (registry guarantees ≤ one hop). */
 function colRef(obj, field) {
+    if (!field.path)
+        throw new Error(`field ${field.key} has neither path nor expr`); // registry bug (defence-in-depth)
     const parts = field.path.split(".");
     if (parts.length === 1)
         return `${ident(obj.key)}.${ident(parts[0])}`;
@@ -45,9 +47,15 @@ function colRef(obj, field) {
 function dateExpr(ref, field) {
     return field.dateTz ? `((${ref}) AT TIME ZONE '${TIME_ZONE}')::date` : `(${ref})::date`;
 }
-/** The SQL expression to SELECT / filter / group a field by (date fields get the date expr). */
+/** The SQL expression to SELECT / filter / group / aggregate a field by — the ONE field→SQL chokepoint.
+ *  A computed field emits its registry-authored `expr` (parenthesized, trusted SQL — see RegistryField.expr);
+ *  a plain field resolves to its column. EITHER WAY a `date` field then gets the same calendar-date
+ *  normalization (`::date`, plus the America/Chicago conversion when `dateTz`), so a computed date field
+ *  buckets and renders in the SAME timezone as every plain date column in the report — the grouping path
+ *  (to_char) can rely on a normalized date regardless of source. (A `number` computed field like a
+ *  day-count skips this and stays the bare expr.) */
 function fieldExpr(obj, field) {
-    const ref = colRef(obj, field);
+    const ref = field.expr ? `(${field.expr})` : colRef(obj, field);
     return field.type === "date" ? dateExpr(ref, field) : ref;
 }
 // ── Value coercion ───────────────────────────────────────────────────────────────────────────────
@@ -226,7 +234,7 @@ export function buildTabularQuery(obj, def, fieldsByKey, principal) {
  *  day / month / year in the field's zone ('yyyy-mm-dd' / 'yyyy-mm' / 'yyyy' text). */
 function groupExpr(obj, groupMeta, bucket) {
     if (groupMeta.type !== "date")
-        return colRef(obj, groupMeta);
+        return fieldExpr(obj, groupMeta); // column OR a computed field's expr
     const d = fieldExpr(obj, groupMeta); // (...)::date
     if (bucket === "year")
         return `to_char(${d}, 'YYYY')`;
@@ -247,8 +255,8 @@ function aggSelectList(obj, def, fieldsByKey) {
         const alias = aggAlias(summaryKey(s));
         if (s.agg === "count")
             return `count(*) AS ${alias}`;
-        const meta = fieldsByKey.get(s.field); // numeric own column (validator guarantees summable)
-        return `${s.agg}(${colRef(obj, meta)}) AS ${alias}`;
+        const meta = fieldsByKey.get(s.field); // numeric field (validator guarantees summable); column or computed expr
+        return `${s.agg}(${fieldExpr(obj, meta)}) AS ${alias}`;
     });
 }
 /**

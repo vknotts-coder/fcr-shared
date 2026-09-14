@@ -17,24 +17,53 @@ import { can } from "../rbac/index.js";
 import type { Principal } from "../contracts/index.js";
 import type { ClientReportObject, FieldType, ReportFieldMeta } from "./definition.js";
 
-/** One reportable field. Extends the client metadata with server-only wiring. */
-export type RegistryField = ReportFieldMeta & {
-  /**
-   * SQL column path, at most ONE relation hop. Own column ⇒ the bare column name (the runner qualifies
-   * it with the object's table alias, e.g. "status" → truck.status). One-hop ⇒ "<joinAlias>.<column>"
-   * (e.g. "customer.sf_name"). Split on a single "." — no deeper paths (matches the one-join-hop runner).
-   */
-  path: string;
+/** Server-only wiring common to every reportable field (the source of the SQL is added by the union below). */
+type RegistryFieldWiring = ReportFieldMeta & {
   /** UI + gating grouping (e.g. "identity" | "pickup" | "delivery" | "financials"). */
   section: string;
   /** Sensitive (financial/internal) — offered only when the per-field can('view', <obj>,
    *  {section, field}) check holds for the principal. */
   sensitive?: boolean;
-  /** For a `date` field whose underlying column is `timestamptz` (not a plain `date`): the runner
+  /** For a `date` field whose underlying column/expr is `timestamptz` (not a plain `date`): the runner
    *  truncates it to the America/Chicago calendar date for day-granular filtering/grouping/rendering,
-   *  so an evening-local record isn't bucketed a day late. Omit for real `date` columns (no-op). */
+   *  so an evening-local record isn't bucketed a day late. Omit for real `date` values (no-op). */
   dateTz?: boolean;
 };
+
+/**
+ * One reportable field (client metadata + server wiring). EXACTLY ONE of `path` (a real column) or `expr`
+ * (a computed SQL expression) — enforced at compile time by the discriminated union, so a catalog author
+ * can't leave both or neither. `colRef`/`fieldExpr` also throw at runtime as defence-in-depth.
+ */
+export type RegistryField = RegistryFieldWiring &
+  (
+    | {
+        /**
+         * SQL column path, at most ONE relation hop. Own column ⇒ the bare column name (the runner qualifies
+         * it with the object's table alias, e.g. "status" → truck.status). One-hop ⇒ "<joinAlias>.<column>"
+         * (e.g. "customer.sf_name"). Split on a single "." — no deeper paths (matches the one-join-hop runner).
+         */
+        path: string;
+        expr?: never;
+      }
+    | {
+        /**
+         * A COMPUTED field: a raw SQL expression used wherever a `path` field would use its column — SELECT,
+         * WHERE, ORDER BY, GROUP BY, aggregates (the runner routes every field→SQL through one chokepoint).
+         * Write a BARE expression (the engine parenthesizes it once for safe composition), e.g.
+         * "timezone('America/Chicago', now())::date - trailer.status_date". A `date`-typed computed field is
+         * still run through the calendar-date normalization (set `dateTz` if the expr yields a timestamptz),
+         * so it buckets/renders in the same timezone as plain date columns.
+         *
+         * ⚠ TRUSTED SQL, registry-authored ONLY — the SAME trust boundary the engine already grants `baseWhere`
+         * and `join.sql`. Emitted verbatim (parenthesized), NOT run through the identifier floor, so it MUST be
+         * written by the registry (code), NEVER assembled from user input. The user's report definition only
+         * ever names a field KEY, validated against the offered set; the key resolves to this expr here.
+         */
+        expr: string;
+        path?: never;
+      }
+  );
 
 export type RegistryObject = {
   key: string;
