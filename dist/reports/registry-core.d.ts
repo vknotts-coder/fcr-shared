@@ -6,8 +6,23 @@ export type RegistryField = ReportFieldMeta & {
      * SQL column path, at most ONE relation hop. Own column ⇒ the bare column name (the runner qualifies
      * it with the object's table alias, e.g. "status" → truck.status). One-hop ⇒ "<joinAlias>.<column>"
      * (e.g. "customer.sf_name"). Split on a single "." — no deeper paths (matches the one-join-hop runner).
+     * OPTIONAL: a computed field sets `expr` instead (exactly one of `path`/`expr` must be set).
      */
-    path: string;
+    path?: string;
+    /**
+     * A COMPUTED field: a raw SQL expression used wherever a `path` field would use its column — SELECT,
+     * WHERE, ORDER BY, GROUP BY, aggregates (the runner routes every field→SQL through one chokepoint).
+     * Write a BARE expression (the engine parenthesizes it once for safe composition), e.g.
+     * "timezone('America/Chicago', now())::date - trailer.status_date".
+     *
+     * ⚠ TRUSTED SQL, registry-authored ONLY — the SAME trust boundary the engine already grants `baseWhere`
+     * and `join.sql`. It is emitted verbatim (parenthesized), NOT run through the identifier floor, so it
+     * MUST be written by the registry (code), NEVER assembled from user input. The user's report definition
+     * only ever names a field KEY, validated against the offered set; the key resolves to this expr here.
+     * The expression must qualify its columns with the object's table alias (the object key) or a join alias.
+     * A computed field's `type` still drives formatting/summability; set groupable/summable per what makes sense.
+     */
+    expr?: string;
     /** UI + gating grouping (e.g. "identity" | "pickup" | "delivery" | "financials"). */
     section: string;
     /** Sensitive (financial/internal) — offered only when the per-field can('view', <obj>,
