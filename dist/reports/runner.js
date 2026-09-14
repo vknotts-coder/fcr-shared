@@ -48,13 +48,14 @@ function dateExpr(ref, field) {
     return field.dateTz ? `((${ref}) AT TIME ZONE '${TIME_ZONE}')::date` : `(${ref})::date`;
 }
 /** The SQL expression to SELECT / filter / group / aggregate a field by — the ONE field→SQL chokepoint.
- *  A computed field emits its registry-authored `expr` verbatim (parenthesized so it composes safely in
- *  WHERE/ORDER/aggregate contexts); the author owns any casting/timezone, so no dateExpr wrapping is
- *  applied. A plain field resolves to its column, with date columns getting the calendar-date expr. */
+ *  A computed field emits its registry-authored `expr` (parenthesized, trusted SQL — see RegistryField.expr);
+ *  a plain field resolves to its column. EITHER WAY a `date` field then gets the same calendar-date
+ *  normalization (`::date`, plus the America/Chicago conversion when `dateTz`), so a computed date field
+ *  buckets and renders in the SAME timezone as every plain date column in the report — the grouping path
+ *  (to_char) can rely on a normalized date regardless of source. (A `number` computed field like a
+ *  day-count skips this and stays the bare expr.) */
 function fieldExpr(obj, field) {
-    if (field.expr)
-        return `(${field.expr})`; // trusted registry SQL — see RegistryField.expr
-    const ref = colRef(obj, field);
+    const ref = field.expr ? `(${field.expr})` : colRef(obj, field);
     return field.type === "date" ? dateExpr(ref, field) : ref;
 }
 // ── Value coercion ───────────────────────────────────────────────────────────────────────────────

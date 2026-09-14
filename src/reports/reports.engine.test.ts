@@ -50,6 +50,8 @@ const gadget: RegistryObject = {
     { key: "name", label: "Name", type: "string", section: "identity", path: "name", filterable: true, groupable: true, summable: false },
     // computed: registry-authored BARE SQL (the engine parenthesizes it), no `path`. Qualified with the object alias.
     { key: "age_days", label: "Age (days)", type: "number", section: "identity", expr: "now()::date - gadget.created_at", filterable: true, groupable: false, summable: false },
+    // computed DATE field: still gets the calendar-date + TZ normalization a plain date column would.
+    { key: "due", label: "Due", type: "date", section: "identity", expr: "gadget.created_at + interval '30 days'", filterable: true, groupable: true, summable: false, dateTz: true },
   ],
 };
 const gcatalog: RegistryObject[] = [gadget];
@@ -86,11 +88,18 @@ describe("computed (expr) fields (#107 Slice A)", () => {
     expect(q.sql).toContain(`ORDER BY ${EXPR} DESC`);
   });
 
+  it("a computed DATE field gets the same ::date + timezone normalization as a plain date column", () => {
+    const q = build({ object: "gadget", columns: ["due"], filters: [], summaries: [] });
+    // dateExpr wraps the (expr) with AT TIME ZONE (dateTz) + ::date, so it buckets in the report's tz.
+    expect(q.sql).toContain("gadget.created_at + interval '30 days'");
+    expect(q.sql).toContain("AT TIME ZONE 'America/Chicago'");
+    expect(q.sql).toMatch(/\)::date AS "due"/);
+  });
+
   it("defence-in-depth: a field with neither path nor expr throws (registry bug), not silent bad SQL", () => {
-    const broken: RegistryObject = {
-      ...gadget,
-      fields: [{ key: "oops", label: "Oops", type: "string", section: "identity", filterable: true, groupable: false, summable: false }],
-    };
+    // The discriminated union makes this a COMPILE error too — cast through to exercise the runtime guard.
+    const oops = { key: "oops", label: "Oops", type: "string", section: "identity", filterable: true, groupable: false, summable: false } as unknown as RegistryField;
+    const broken: RegistryObject = { ...gadget, fields: [oops] };
     const fieldsByKey = new Map(broken.fields.map((f) => [f.key, f] as [string, RegistryField]));
     expect(() => buildTabularQuery(broken, { object: "gadget", columns: ["oops"], filters: [], summaries: [], filterLogic: null, groupBy: null, sort: null } as never, fieldsByKey, admin)).toThrow(/neither path nor expr/);
   });
