@@ -121,6 +121,28 @@ describe("trailer object", () => {
     expect(byKey.get("delivery_date")?.expr).toBeUndefined();
   });
 
+  it("adds the computed turn-time durations (#26 Ship 3) — expr, no path, number, summable", () => {
+    const byKey = new Map(trailerFields.map((f) => [f.key, f]));
+    for (const k of [
+      "notification_to_arrival_duration", "approved_to_complete_duration", "repair_in_progress_duration",
+      "repair_completion_to_delivery_duration", "pickup_to_delivery", "estimate_start_to_complete_duration",
+    ]) {
+      const f = byKey.get(k)!;
+      expect(f, `missing ${k}`).toBeDefined();
+      expect(f.type).toBe("number");
+      expect(f.expr, `${k} should be a computed expr`).toBeTruthy();
+      expect(f.path, `${k} is computed, no path`).toBeUndefined();
+      expect(f.summable, `${k} summable (Bi-Weekly avgs a duration)`).toBe(true);
+    }
+    // faithfulness pins: the SF `IF(ISBLANK(end), TODAY()-start, end-start)` shape → COALESCE(end, tz-today) - start
+    expect(byKey.get("repair_in_progress_duration")!.expr).toContain("COALESCE(trailer.repair_completion_date");
+    expect(byKey.get("repair_in_progress_duration")!.expr).toContain("- trailer.repair_start_date");
+    // pickup_to_delivery is NULL when there is no arrival (SF returns NULL, not an elapsed count)
+    expect(byKey.get("pickup_to_delivery")!.expr).toContain("WHEN trailer.arrival_date IS NULL THEN NULL");
+    // estimate_start_to_complete has no TODAY() branch — a plain span
+    expect(byKey.get("estimate_start_to_complete_duration")!.expr).not.toContain("now()");
+  });
+
   it("a definition referencing the new fields VALIDATES for a viewer", () => {
     const client = toClientObject(trailerObject({ capability: allow }), admin);
     const def = {

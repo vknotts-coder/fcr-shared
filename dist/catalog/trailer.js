@@ -95,6 +95,20 @@ export const trailerFields = [
     computed("number", "days_in_status", "Days in status", "status", "timezone('America/Chicago', now())::date - trailer.status_date"),
     // NULL unless invoiced-and-unpaid (invoice_date set, invoice_paid_date null) — exactly the old bespoke SQL.
     computed("number", "days_past_due", "Days past due", "status", "CASE WHEN trailer.invoice_date IS NOT NULL AND trailer.invoice_paid_date IS NULL THEN timezone('America/Chicago', now())::date - trailer.invoice_date END"),
+    // Turn-time durations (#26 Ship 3). These reproduce the SF FORMULA fields verbatim (pulled from the
+    // FCR_Collision_Trailer__c describe): `IF(ISBLANK(end), TODAY() - start, end - start)`, i.e. elapsed days
+    // so far when the end date is missing, else the completed span. TODAY() → central-tz calendar day (matches
+    // days_in_status). Postgres `date - date` = whole days; `date - NULL` = NULL, so a null START (the
+    // subtrahend that is NOT the ISBLANK-checked one) yields NULL, exactly like SF. summable ⇒ can be
+    // averaged (SF's Bi-Weekly report AVGs estimate_start_to_complete).
+    computed("number", "notification_to_arrival_duration", "Notification → arrival (days)", "turnaround", "COALESCE(trailer.arrival_date, timezone('America/Chicago', now())::date) - trailer.notify_date", { summable: true }),
+    computed("number", "approved_to_complete_duration", "Approved → complete (days)", "turnaround", "COALESCE(trailer.repair_completion_date, timezone('America/Chicago', now())::date) - trailer.estimate_approved_date", { summable: true }),
+    computed("number", "repair_in_progress_duration", "Repair in progress (days)", "turnaround", "COALESCE(trailer.repair_completion_date, timezone('America/Chicago', now())::date) - trailer.repair_start_date", { summable: true }),
+    computed("number", "repair_completion_to_delivery_duration", "Repair complete → delivery (days)", "turnaround", "COALESCE(trailer.delivery_date, timezone('America/Chicago', now())::date) - trailer.repair_completion_date", { summable: true }),
+    // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that.
+    computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", "CASE WHEN trailer.arrival_date IS NULL THEN NULL ELSE COALESCE(trailer.delivery_date, timezone('America/Chicago', now())::date) - trailer.arrival_date END", { summable: true }),
+    // No TODAY() branch in SF — a plain completed-minus-started span (NULL until both dates exist).
+    computed("number", "estimate_start_to_complete_duration", "Estimate start → complete (days)", "turnaround", "trailer.estimate_completed_date - trailer.estimate_start_date", { summable: true }),
     // Customer (one-hop join)
     str("customer_name", "Customer", "customer", "customer.sf_name"),
     str("customer_city", "Customer city", "customer", "customer.billing_city"),
