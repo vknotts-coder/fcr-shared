@@ -8,7 +8,7 @@
 
 import type { Principal } from "../contracts/index.js";
 import type { RegistryField, RegistryObject } from "../reports/registry-core.js";
-import { str, dateF, dateTzF, numF, money, computed } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, bool, computed } from "./fields.js";
 
 /** The trailer object's field table (schema-coupled; identical across apps). */
 export const trailerFields: RegistryField[] = [
@@ -62,6 +62,38 @@ export const trailerFields: RegistryField[] = [
   // Account FK — the stable customer.sf_id link. Filterable so an account-scoped list (a search hit
   // /trailers?account=<sf_id>) can filter on it; not a friendly display column, so section=customer.
   str("fcr_collision_account", "Account (SF id)", "customer"),
+  // SF report-parity fields (#26 canned reports). These columns all exist in fcr_core.trailer (verified
+  // against db/fcr_core.schema.sql, 2026-09-14) but weren't surfaced in the catalog until now — the SF
+  // "FCR Collision - Trailers" report folder references them, and the reports here are declarative
+  // definitions run through the shared engine, so every referenced column must be a catalog field.
+  // Estimate lifecycle
+  dateF("estimate_start_date", "Estimate started", "status"),
+  dateF("estimate_completed_date", "Estimate completed", "status"),
+  dateF("estimate_finalized", "Estimate finalized", "status"),
+  numF("actual_hours", "Actual hours", "status"),
+  // Arrival / anticipation
+  dateF("anticipated_arrival_date", "Anticipated arrival", "status"),
+  // Invoicing (invoice_1 is above; §2.0 invoice number + free-text notes)
+  str("invoice_2", "Invoice # (2)", "status"),
+  str("invoice_notes", "Invoice notes", "status"),
+  str("po", "PO #", "identity"),
+  // Delivery leg detail (address/zip + the dispatch + completed dates)
+  str("delivery_address", "Delivery address", "delivery"),
+  str("delivery_zip_code", "Delivery ZIP", "delivery"),
+  dateF("delivery_dispatch_date", "Delivery dispatched", "delivery"),
+  dateF("delivery_date", "Delivered", "delivery"),
+  // Pickup leg detail (address/zip; city/state/dispatch already above)
+  str("pickup_address", "Pickup address", "pickup"),
+  str("pickup_zip_code", "Pickup ZIP", "pickup"),
+  // Rework (boolean flag + the two dates + free-text notes)
+  bool("rework", "Rework", "status"),
+  dateF("rework_date", "Rework date", "status"),
+  dateF("rework_end_date", "Rework ended", "status"),
+  str("rework_notes", "Rework notes", "status"),
+  // Total loss decision (timestamptz — local-date in the runner)
+  dateTzF("total_loss_decided_at", "Total loss decided", "status"),
+  // Contact (free-text SF contact string; section=customer alongside the account FK)
+  str("fcr_collision_contact", "Contact", "customer"),
   // Computed day-counts (require reports ≥ v0.7.0). Central-tz calendar day, matching the record page's
   // dayDiff, so counts don't drift a day in the evening (UTC). filterable ⇒ the past_due view can filter.
   computed("number", "days_in_status", "Days in status", "status", "timezone('America/Chicago', now())::date - trailer.status_date"),

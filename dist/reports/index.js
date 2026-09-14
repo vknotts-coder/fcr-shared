@@ -12,6 +12,7 @@
 // runReport/validateReport take the catalog as a parameter; savedReports takes db as a parameter —
 // so nothing here imports an app module or a DB driver.
 export * from "./definition.js";
+export * from "./dates.js";
 export * from "./registry-core.js";
 export * from "./runner.js";
 export * from "./csv.js";
