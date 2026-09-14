@@ -121,7 +121,7 @@ describe("trailer object", () => {
     expect(byKey.get("delivery_date")?.expr).toBeUndefined();
   });
 
-  it("adds the computed turn-time durations (#26 Ship 3) — expr, no path, number, summable", () => {
+  it("adds the computed turn-time durations (#26 Ship 3) — expr, no path, number; only the completed-only span is summable", () => {
     const byKey = new Map(trailerFields.map((f) => [f.key, f]));
     for (const k of [
       "notification_to_arrival_duration", "approved_to_complete_duration", "repair_in_progress_duration",
