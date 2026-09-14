@@ -16,11 +16,17 @@
 // ── Filter helpers ───────────────────────────────────────────────────────────────────────────────
 const eq = (field, value) => ({ field, op: "eq", value });
 const neq = (field, value) => ({ field, op: "neq", value });
-const inList = (field, values) => ({ field, op: "in", value: values });
 const gte = (field, value) => ({ field, op: "gte", value });
 const isNull = (field) => ({ field, op: "isNull" });
 const notNull = (field) => ({ field, op: "notNull" });
 const sort = (field, dir = "asc") => ({ field, dir });
+// "status ∈ {values}" expressed as OR'd eq()s — the engine has NO `in` operator (OPERATORS_BY_TYPE omits
+// it, inert until a multi-select control lands), so the status-select active mode and these preset views
+// all build set-membership from eq + OR. Returns the filters plus a "(1 OR 2 …)" logic fragment; `start`
+// is the 1-based index of the first of these filters in the final filter array.
+function statusOneOf(values, start = 1) {
+    return { filters: values.map((v) => eq("status", v)), logic: `(${values.map((_, i) => String(start + i)).join(" OR ")})` };
+}
 // Terminal statuses excluded by the default "All active" mode.
 const TRUCK_TERMINAL = ["Delivered", "Total Loss", "Donor", "Sold - Total Loss", "No Repair"];
 const TRAILER_TERMINAL = ["Delivered", "Total Loss", "Do Not Repair"];
@@ -104,8 +110,8 @@ const TRAILER_VIEWS = [
         description: "Approved and awaiting/received parts — the pre-repair scheduling queue.",
         columns: TRAILER_PIPELINE_COLS,
         defaultSort: sort("days_in_status", "desc"),
-        filters: [inList("status", TRAILER_SCHEDULING_STATUSES)],
-        filterLogic: null,
+        filters: statusOneOf(TRAILER_SCHEDULING_STATUSES).filters,
+        filterLogic: statusOneOf(TRAILER_SCHEDULING_STATUSES).logic,
     },
     {
         slug: "wip",
@@ -125,9 +131,10 @@ const TRAILER_VIEWS = [
         group: "overview",
         description: "Closed trailers not yet invoiced (delivered / total loss / do not repair, invoice # blank).",
         columns: TRAILER_PIPELINE_COLS,
+        // status ∈ terminal  AND  invoice_1 IS NULL. The isNull follows the OR'd status eq()s.
         defaultSort: sort("days_in_status", "desc"),
-        filters: [inList("status", TRAILER_TERMINAL), isNull("invoice_1")],
-        filterLogic: null,
+        filters: [...statusOneOf(TRAILER_TERMINAL).filters, isNull("invoice_1")],
+        filterLogic: `${statusOneOf(TRAILER_TERMINAL).logic} AND ${TRAILER_TERMINAL.length + 1}`,
     },
     {
         slug: "past_due",

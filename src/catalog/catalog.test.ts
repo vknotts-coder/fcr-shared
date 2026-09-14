@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { truckObject, truckFields } from "./truck.js";
 import { trailerObject, trailerFields } from "./trailer.js";
 import { LIST_VIEWS, getListView, listViewsForObject, resolveSort, resolveStatus, listViewDefinition } from "./listviews.js";
+import { toClientObject } from "../reports/registry-core.js";
+import { validateDefinition } from "../reports/definition.js";
 import type { Principal } from "../contracts/index.js";
 
 // Faithfulness pins for the catalog lifted from fcr-dispatch (#107 Slice 1). If a future edit changes the
@@ -10,6 +12,17 @@ import type { Principal } from "../contracts/index.js";
 const allow = (_p: Principal) => true;
 const deny = (_p: Principal) => false;
 const p = {} as Principal;
+
+// An all-access principal so toClientObject offers every field (sensitive included) — used to validate that
+// each list view's definition is actually RUNNABLE for a viewer, not just shaped right.
+const admin: Principal = {
+  username: "admin",
+  accountId: "00000000-0000-0000-0000-0000000000ad",
+  grants: [
+    { roleId: "", resourceType: "*", action: "admin", section: null, field: null, scope: "all", effect: "allow", departmentId: null, shopId: null },
+    { roleId: "", resourceType: "*", action: "view", section: null, field: null, scope: "all", effect: "allow", departmentId: null, shopId: null },
+  ],
+};
 
 describe("truck object", () => {
   const obj = truckObject({ capability: allow });
@@ -116,19 +129,45 @@ describe("list views", () => {
     expect(adef.filterLogic).toContain("OR");
   });
 
-  it("the new trailer preset views build the right static filters", () => {
+  it("the new trailer preset views build the right static filters (OR'd eq — the engine has no `in`)", () => {
     const pd = listViewDefinition(getListView("trailer", "past_due")!, getListView("trailer", "past_due")!.defaultSort);
     expect(pd.filters).toEqual([{ field: "days_past_due", op: "gte", value: "30" }]);
 
     const ti = getListView("trailer", "to_invoice")!;
     const tidef = listViewDefinition(ti, ti.defaultSort);
     expect(tidef.filters).toEqual([
-      { field: "status", op: "in", value: ["Delivered", "Total Loss", "Do Not Repair"] },
+      { field: "status", op: "eq", value: "Delivered" },
+      { field: "status", op: "eq", value: "Total Loss" },
+      { field: "status", op: "eq", value: "Do Not Repair" },
       { field: "invoice_1", op: "isNull" },
     ]);
+    expect(tidef.filterLogic).toBe("(1 OR 2 OR 3) AND 4");
 
     const sc = getListView("trailer", "scheduling")!;
     const scdef = listViewDefinition(sc, sc.defaultSort);
-    expect(scdef.filters).toEqual([{ field: "status", op: "in", value: ["Approved", "Awaiting Parts", "Parts Received"] }]);
+    expect(scdef.filters).toEqual([
+      { field: "status", op: "eq", value: "Approved" },
+      { field: "status", op: "eq", value: "Awaiting Parts" },
+      { field: "status", op: "eq", value: "Parts Received" },
+    ]);
+    expect(scdef.filterLogic).toBe("(1 OR 2 OR 3)");
+  });
+
+  // The contract that actually matters: every list view's definition must VALIDATE for a viewer (offered
+  // fields, legal operators, sort ∈ columns) — this is the gate that catches an illegal op / off-catalog
+  // field, which a raw `.filters` deep-equal does NOT. (The `in`-operator break shipped past shape tests.)
+  it("EVERY list view produces a definition that validateDefinition accepts", () => {
+    const objFor = (o: string) => (o === "truck" ? truckObject({ capability: allow }) : trailerObject({ capability: allow }));
+    for (const view of LIST_VIEWS) {
+      const client = toClientObject(objFor(view.object), admin);
+      const modes = view.statusSelect
+        ? [null, view.statusSelect.options[0] ?? null] // default 'active' AND a picked status
+        : [null];
+      for (const status of modes) {
+        const def = listViewDefinition(view, view.defaultSort, status);
+        const res = validateDefinition(def, client);
+        expect(res.ok, `${view.object}/${view.slug} (status=${status ?? "active"}): ${res.ok ? "" : res.errors.join("; ")}`).toBe(true);
+      }
+    }
   });
 });
