@@ -96,6 +96,48 @@ describe("trailer object", () => {
     expect(byKey.get("days_in_status")?.expr).toContain("status_date");
     expect(byKey.get("days_in_status")?.path).toBeUndefined();
   });
+
+  it("surfaces the SF report-parity columns (#26) with correct types", () => {
+    const byKey = new Map(trailerFields.map((f) => [f.key, f]));
+    // A representative sample across the added set — existence + type/backing.
+    for (const k of [
+      "estimate_start_date", "estimate_completed_date", "estimate_finalized", "actual_hours",
+      "anticipated_arrival_date", "invoice_2", "invoice_notes", "po",
+      "delivery_address", "delivery_zip_code", "delivery_dispatch_date", "delivery_date",
+      "pickup_address", "pickup_zip_code", "rework", "rework_date", "rework_end_date",
+      "rework_notes", "total_loss_decided_at", "fcr_collision_contact",
+    ]) {
+      expect(byKey.has(k), `missing catalog field ${k}`).toBe(true);
+    }
+    expect(byKey.get("actual_hours")?.type).toBe("number");
+    expect(byKey.get("rework")?.type).toBe("boolean");
+    // total_loss_decided_at is a timestamptz surfaced as a local-date field (dateTz), like created_at.
+    expect(byKey.get("total_loss_decided_at")?.type).toBe("date");
+    expect(byKey.get("total_loss_decided_at")?.dateTz).toBe(true);
+    // plain date columns are NOT dateTz
+    expect(byKey.get("delivery_date")?.dateTz).toBeUndefined();
+    // each is a real column (path defaults to key), not a computed expr
+    expect(byKey.get("invoice_2")?.path).toBe("invoice_2");
+    expect(byKey.get("delivery_date")?.expr).toBeUndefined();
+  });
+
+  it("a definition referencing the new fields VALIDATES for a viewer", () => {
+    const client = toClientObject(trailerObject({ capability: allow }), admin);
+    const def = {
+      object: "trailer",
+      columns: ["sf_name", "status", "delivery_date", "actual_hours", "invoice_2", "rework"],
+      filters: [
+        { field: "delivery_date", op: "gte", value: "2026-01-01" },
+        { field: "delivery_date", op: "lt", value: "2027-01-01" },
+        { field: "rework", op: "eq", value: "true" },
+      ],
+      filterLogic: "1 AND 2 AND 3",
+      summaries: [],
+      sort: { field: "delivery_date", dir: "desc" },
+    };
+    const res = validateDefinition(def, client);
+    expect(res.ok, res.ok ? "" : res.errors.join("; ")).toBe(true);
+  });
 });
 
 describe("list views", () => {

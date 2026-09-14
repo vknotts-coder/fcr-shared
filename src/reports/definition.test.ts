@@ -14,6 +14,7 @@ const OBJ: ClientReportObject = {
     { key: "total_sales", label: "Total sales", type: "money", filterable: true, groupable: false, summable: true },
     { key: "notify_date", label: "Notified", type: "date", filterable: true, groupable: true, summable: false },
     { key: "pickup_driver", label: "Pickup driver", type: "string", filterable: true, groupable: true, summable: false },
+    { key: "rework", label: "Rework", type: "boolean", filterable: true, groupable: true, summable: false },
   ],
 };
 
@@ -123,6 +124,21 @@ describe("validateDefinition — the security floor + shape rules", () => {
       const r = validateDefinition({ ...base, filters: [{ field: "notify_date", op: "eq", value: bad }] }, OBJ);
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.errors.join()).toMatch(/not a valid date/);
+    }
+  });
+
+  it("rejects a boolean filter value other than 'true'/'false' (else coerceParam silently makes it false)", () => {
+    // Negative control — the exact miss shape: a non-'true' string that coerceParam (raw === "true")
+    // would coerce to JS false, bind as a real boolean, and return the wrong rows. Without the guard in
+    // validateDefinition these PASS validation; with it they are rejected.
+    for (const bad of ["True", "TRUE", "1", "t", "yes", "0", "nope"]) {
+      const r = validateDefinition({ ...base, filters: [{ field: "rework", op: "eq", value: bad }] }, OBJ);
+      expect(r.ok, `expected '${bad}' to be rejected`).toBe(false);
+      if (!r.ok) expect(r.errors.join()).toMatch(/is not a boolean/);
+    }
+    // The two legal values still pass.
+    for (const good of ["true", "false"]) {
+      expect(validateDefinition({ ...base, filters: [{ field: "rework", op: "eq", value: good }] }, OBJ).ok, good).toBe(true);
     }
   });
 

@@ -13,6 +13,7 @@ export declare const dateF: (key: string, label: string, section: string, path?:
 export declare const dateTzF: (key: string, label: string, section: string, path?: string) => RegistryField;
 export declare const numF: (key: string, label: string, section: string, path?: string) => RegistryField;
 export declare const money: (key: string, label: string, section: string, sensitive?: boolean, path?: string) => RegistryField;
+export declare const bool: (key: string, label: string, section: string, path?: string) => RegistryField;
 export declare const computed: (type: FieldType, key: string, label: string, section: string, expr: string, opts?: {
     filterable?: boolean;
     groupable?: boolean;

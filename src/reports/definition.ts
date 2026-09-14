@@ -405,6 +405,11 @@ export function validateDefinition(raw: unknown, obj: ClientReportObject): Valid
         // NaN, Infinity, -Infinity and "1e999" alike while accepting every real numeric string. Symmetric
         // with the date guard above.
         errors.push(`filter ${f.field}: '${f.value}' is not a number`);
+      } else if (meta.type === "boolean" && typeof f.value === "string" && f.value !== "true" && f.value !== "false") {
+        // Reject anything but the exact 'true'/'false' HERE — else coerceParam (raw === "true") silently
+        // coerces 'True'/'1'/'t'/a typo to JS false, binds it as a real boolean, and returns the wrong
+        // (false) rows with no SQL error and a passing validation. Symmetric with the date/number guards.
+        errors.push(`filter ${f.field}: '${f.value}' is not a boolean (expected 'true' or 'false')`);
       }
     }
     // Enum values must be within the offered set (defense in depth — the picker only shows these).

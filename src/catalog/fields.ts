@@ -32,6 +32,8 @@ export const dateF = (key: string, label: string, section: string, path?: string
 export const dateTzF = (key: string, label: string, section: string, path?: string): RegistryField => ({ ...dateF(key, label, section, path), dateTz: true });
 export const numF = (key: string, label: string, section: string, path?: string) => f("number", key, label, section, { path });
 export const money = (key: string, label: string, section: string, sensitive = true, path?: string) => f("money", key, label, section, { path, sensitive, groupable: false });
+// A boolean field (OPERATORS_BY_TYPE boolean: eq / isNull / notNull). Groupable (true/false buckets), not summable.
+export const bool = (key: string, label: string, section: string, path?: string) => f("boolean", key, label, section, { path, summable: false });
 
 // A COMPUTED field — maps to a registry-authored SQL `expr` instead of a column (see RegistryField.expr;
 // requires @fcr/core reports ≥ v0.7.0). `expr` is TRUSTED registry SQL, never user input; qualify columns
