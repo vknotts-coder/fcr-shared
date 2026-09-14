@@ -43,9 +43,18 @@ export type ListView = {
 // ── Filter helpers ───────────────────────────────────────────────────────────────────────────────
 const eq = (field: string, value: string): ReportFilter => ({ field, op: "eq", value });
 const neq = (field: string, value: string): ReportFilter => ({ field, op: "neq", value });
+const gte = (field: string, value: string): ReportFilter => ({ field, op: "gte", value });
 const isNull = (field: string): ReportFilter => ({ field, op: "isNull" });
 const notNull = (field: string): ReportFilter => ({ field, op: "notNull" });
 const sort = (field: string, dir: "asc" | "desc" = "asc"): ReportSort => ({ field, dir });
+
+// "status ∈ {values}" expressed as OR'd eq()s — the engine has NO `in` operator (OPERATORS_BY_TYPE omits
+// it, inert until a multi-select control lands), so the status-select active mode and these preset views
+// all build set-membership from eq + OR. Returns the filters plus a "(1 OR 2 …)" logic fragment; `start`
+// is the 1-based index of the first of these filters in the final filter array.
+function statusOneOf(values: string[], start = 1): { filters: ReportFilter[]; logic: string } {
+  return { filters: values.map((v) => eq("status", v)), logic: `(${values.map((_, i) => String(start + i)).join(" OR ")})` };
+}
 
 // Terminal statuses excluded by the default "All active" mode.
 const TRUCK_TERMINAL = ["Delivered", "Total Loss", "Donor", "Sold - Total Loss", "No Repair"];
@@ -69,7 +78,11 @@ const TRAILER_STATUSES = [
 ];
 
 const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
-const TRAILER_COLS = ["sf_name", "full_vin", "status", "team", "notify_date", "arrival_date", "repair_goal", "estimated_hours", "completetion_percentage"];
+// The fcr-trailers "Repair Pipeline" columns (parity with the old bespoke TrailerTable): unit, customer,
+// status, days-in-status, type, team, invoice #, days-past-due. Requires the computed day-count fields.
+const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "invoice_1", "days_past_due"];
+// Statuses grouped as the old client presets did (scheduling = pre-repair queue).
+const TRAILER_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Parts Received"];
 
 // ── The catalog ───────────────────────────────────────────────────────────────────────────────────
 
@@ -114,10 +127,25 @@ const TRAILER_VIEWS: ListView[] = [
     object: "trailer",
     label: "Trailers",
     group: "overview",
+    // The Repair Pipeline overview. Columns are the pipeline set (days-in-status / type / invoice # /
+    // days-past-due) rather than the earlier VIN/arrival/est-hours set — parity with the fcr-trailers list
+    // this replaces. Only affects a consumer on reports ≥ v0.7.0 (the computed columns); older pins are
+    // unaffected until they repin.
     description: "Every active trailer. Pick a status to narrow (any status, including delivered / total loss).",
-    columns: TRAILER_COLS,
-    defaultSort: sort("notify_date", "desc"),
+    columns: TRAILER_PIPELINE_COLS,
+    defaultSort: sort("days_in_status", "desc"),
     statusSelect: { options: TRAILER_STATUSES, activeExcludes: TRAILER_TERMINAL },
+  },
+  {
+    slug: "scheduling",
+    object: "trailer",
+    label: "Scheduling",
+    group: "overview",
+    description: "Approved and awaiting/received parts — the pre-repair scheduling queue.",
+    columns: TRAILER_PIPELINE_COLS,
+    defaultSort: sort("days_in_status", "desc"),
+    filters: statusOneOf(TRAILER_SCHEDULING_STATUSES).filters,
+    filterLogic: statusOneOf(TRAILER_SCHEDULING_STATUSES).logic,
   },
   {
     slug: "wip",
@@ -129,6 +157,29 @@ const TRAILER_VIEWS: ListView[] = [
     defaultSort: sort("repair_start_date", "asc"),
     filters: [notNull("repair_start_date"), isNull("invoice_date"), neq("status", "Total Loss"), isNull("status")],
     filterLogic: "1 AND 2 AND (3 OR 4)",
+  },
+  {
+    slug: "to_invoice",
+    object: "trailer",
+    label: "To Invoice",
+    group: "overview",
+    description: "Closed trailers not yet invoiced (delivered / total loss / do not repair, invoice # blank).",
+    columns: TRAILER_PIPELINE_COLS,
+    // status ∈ terminal  AND  invoice_1 IS NULL. The isNull follows the OR'd status eq()s.
+    defaultSort: sort("days_in_status", "desc"),
+    filters: [...statusOneOf(TRAILER_TERMINAL).filters, isNull("invoice_1")],
+    filterLogic: `${statusOneOf(TRAILER_TERMINAL).logic} AND ${TRAILER_TERMINAL.length + 1}`,
+  },
+  {
+    slug: "past_due",
+    object: "trailer",
+    label: "Past Due",
+    group: "overview",
+    description: "Invoiced-and-unpaid trailers 30+ days past the invoice date.",
+    columns: TRAILER_PIPELINE_COLS,
+    defaultSort: sort("days_past_due", "desc"),
+    filters: [gte("days_past_due", "30")],
+    filterLogic: null,
   },
 ];
 

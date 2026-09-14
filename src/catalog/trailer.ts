@@ -8,7 +8,7 @@
 
 import type { Principal } from "../contracts/index.js";
 import type { RegistryField, RegistryObject } from "../reports/registry-core.js";
-import { str, dateF, dateTzF, numF, money } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, computed } from "./fields.js";
 
 /** The trailer object's field table (schema-coupled; identical across apps). */
 export const trailerFields: RegistryField[] = [
@@ -56,6 +56,17 @@ export const trailerFields: RegistryField[] = [
   str("parts_available", "Parts available", "status"),
   numF("completetion_percentage", "% complete", "status"),
   numF("estimated_hours", "Est. hours", "status"),
+  // Repair-pipeline parity fields (the fcr-trailers list surface: type, invoice #, and the two day-counts).
+  str("type", "Type", "identity"),
+  str("invoice_1", "Invoice #", "status"),
+  // Account FK — the stable customer.sf_id link. Filterable so an account-scoped list (a search hit
+  // /trailers?account=<sf_id>) can filter on it; not a friendly display column, so section=customer.
+  str("fcr_collision_account", "Account (SF id)", "customer"),
+  // Computed day-counts (require reports ≥ v0.7.0). Central-tz calendar day, matching the record page's
+  // dayDiff, so counts don't drift a day in the evening (UTC). filterable ⇒ the past_due view can filter.
+  computed("number", "days_in_status", "Days in status", "status", "timezone('America/Chicago', now())::date - trailer.status_date"),
+  // NULL unless invoiced-and-unpaid (invoice_date set, invoice_paid_date null) — exactly the old bespoke SQL.
+  computed("number", "days_past_due", "Days past due", "status", "CASE WHEN trailer.invoice_date IS NOT NULL AND trailer.invoice_paid_date IS NULL THEN timezone('America/Chicago', now())::date - trailer.invoice_date END"),
   // Customer (one-hop join)
   str("customer_name", "Customer", "customer", "customer.sf_name"),
   str("customer_city", "Customer city", "customer", "customer.billing_city"),
