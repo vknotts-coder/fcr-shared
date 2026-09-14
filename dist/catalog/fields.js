@@ -24,6 +24,16 @@ export const numF = (key, label, section, path) => f("number", key, label, secti
 export const money = (key, label, section, sensitive = true, path) => f("money", key, label, section, { path, sensitive, groupable: false });
 // A boolean field (OPERATORS_BY_TYPE boolean: eq / isNull / notNull). Groupable (true/false buckets), not summable.
 export const bool = (key, label, section, path) => f("boolean", key, label, section, { path, summable: false });
+// The central-tz (America/Chicago) calendar TODAY as a SQL date — the basis for every now()-relative computed
+// field (day-counts, turn-times), so a tz-basis change is ONE edit. Matches the record page's dayDiff so
+// counts don't drift a day in the evening (UTC).
+export const tzToday = "timezone('America/Chicago', now())::date";
+// An SF turn-time duration: `IF(ISBLANK(end), TODAY()-start, end-start)` → elapsed-so-far when the end date is
+// missing, else the completed span. Args are qualified column refs (e.g. "trailer.delivery_date"). Postgres
+// `date - date` = whole days and `date - NULL` = NULL, so a null start yields NULL, exactly like SF.
+// OPEN-INCLUSIVE (blends in-progress rows into any aggregate), so a field built from this is display-only —
+// leave it NOT summable (the catalog default for computed fields).
+export const sfDuration = (endCol, startCol) => `COALESCE(${endCol}, ${tzToday}) - ${startCol}`;
 // A COMPUTED field — maps to a registry-authored SQL `expr` instead of a column (see RegistryField.expr;
 // requires @fcr/core reports ≥ v0.7.0). `expr` is TRUSTED registry SQL, never user input; qualify columns
 // with the object's table alias (its key) or a join alias. Derived metrics default to NOT groupable /

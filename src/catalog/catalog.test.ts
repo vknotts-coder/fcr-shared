@@ -132,8 +132,14 @@ describe("trailer object", () => {
       expect(f.type).toBe("number");
       expect(f.expr, `${k} should be a computed expr`).toBeTruthy();
       expect(f.path, `${k} is computed, no path`).toBeUndefined();
-      expect(f.summable, `${k} summable (Bi-Weekly avgs a duration)`).toBe(true);
     }
+    // Only the completed-only span is summable — the five open-inclusive (COALESCE-to-today) durations are
+    // display-only, so an AVG can't silently blend in-progress rows / drift daily.
+    for (const k of ["notification_to_arrival_duration", "approved_to_complete_duration", "repair_in_progress_duration", "repair_completion_to_delivery_duration", "pickup_to_delivery"]) {
+      expect(byKey.get(k)!.summable, `${k} open-inclusive → NOT summable`).toBe(false);
+      expect(byKey.get(k)!.expr, `${k} is now()-relative`).toContain("now()");
+    }
+    expect(byKey.get("estimate_start_to_complete_duration")!.summable, "completed-only span is summable").toBe(true);
     // faithfulness pins: the SF `IF(ISBLANK(end), TODAY()-start, end-start)` shape → COALESCE(end, tz-today) - start
     expect(byKey.get("repair_in_progress_duration")!.expr).toContain("COALESCE(trailer.repair_completion_date");
     expect(byKey.get("repair_in_progress_duration")!.expr).toContain("- trailer.repair_start_date");
