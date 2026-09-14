@@ -8,7 +8,7 @@
 
 import type { Principal } from "../contracts/index.js";
 import type { RegistryField, RegistryObject } from "../reports/registry-core.js";
-import { str, dateF, dateTzF, numF, money, bool, computed } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, bool, computed, tzToday, sfDuration } from "./fields.js";
 
 /** The trailer object's field table (schema-coupled; identical across apps). */
 export const trailerFields: RegistryField[] = [
@@ -94,11 +94,30 @@ export const trailerFields: RegistryField[] = [
   dateTzF("total_loss_decided_at", "Total loss decided", "status"),
   // Contact (free-text SF contact string; section=customer alongside the account FK)
   str("fcr_collision_contact", "Contact", "customer"),
-  // Computed day-counts (require reports ≥ v0.7.0). Central-tz calendar day, matching the record page's
-  // dayDiff, so counts don't drift a day in the evening (UTC). filterable ⇒ the past_due view can filter.
-  computed("number", "days_in_status", "Days in status", "status", "timezone('America/Chicago', now())::date - trailer.status_date"),
+  // Computed day-counts (require reports ≥ v0.7.0). Central-tz calendar day (tzToday), matching the record
+  // page's dayDiff, so counts don't drift a day in the evening (UTC). filterable ⇒ the past_due view filters.
+  // NOT summable (the computed default): a now()-based count drifts daily and blends open rows, so a SUM/AVG
+  // of it is meaningless.
+  computed("number", "days_in_status", "Days in status", "status", `${tzToday} - trailer.status_date`),
   // NULL unless invoiced-and-unpaid (invoice_date set, invoice_paid_date null) — exactly the old bespoke SQL.
-  computed("number", "days_past_due", "Days past due", "status", "CASE WHEN trailer.invoice_date IS NOT NULL AND trailer.invoice_paid_date IS NULL THEN timezone('America/Chicago', now())::date - trailer.invoice_date END"),
+  computed("number", "days_past_due", "Days past due", "status", `CASE WHEN trailer.invoice_date IS NOT NULL AND trailer.invoice_paid_date IS NULL THEN ${tzToday} - trailer.invoice_date END`),
+  // Turn-time durations (#26 Ship 3). Reproduce the SF FORMULA fields verbatim (FCR_Collision_Trailer__c
+  // describe): `IF(ISBLANK(end), TODAY() - start, end - start)` → elapsed-so-far when the end date is missing,
+  // else the completed span (see sfDuration). These are OPEN-INCLUSIVE (a still-open trailer contributes its
+  // partial elapsed days), so — like the day-counts above — they are DISPLAY-ONLY and left NOT summable: an
+  // AVG/SUM would blend in-progress rows, drift daily, and not be reproducible for a past date. The reports
+  // show them as detail columns, they don't aggregate them.
+  computed("number", "notification_to_arrival_duration", "Notification → arrival (days)", "turnaround", sfDuration("trailer.arrival_date", "trailer.notify_date")),
+  computed("number", "approved_to_complete_duration", "Approved → complete (days)", "turnaround", sfDuration("trailer.repair_completion_date", "trailer.estimate_approved_date")),
+  computed("number", "repair_in_progress_duration", "Repair in progress (days)", "turnaround", sfDuration("trailer.repair_completion_date", "trailer.repair_start_date")),
+  computed("number", "repair_completion_to_delivery_duration", "Repair complete → delivery (days)", "turnaround", sfDuration("trailer.delivery_date", "trailer.repair_completion_date")),
+  // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that. Open-inclusive
+  // once arrival exists, so also display-only / not summable.
+  computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", `CASE WHEN trailer.arrival_date IS NULL THEN NULL ELSE COALESCE(trailer.delivery_date, ${tzToday}) - trailer.arrival_date END`),
+  // The ONLY summable duration: a plain completed-minus-started span (no now() branch → NULL until both dates
+  // exist → completed rows only), so an AVG is a stable, reproducible turn-time KPI. SF's Bi-Weekly report
+  // AVGs exactly this field.
+  computed("number", "estimate_start_to_complete_duration", "Estimate start → complete (days)", "turnaround", "trailer.estimate_completed_date - trailer.estimate_start_date", { summable: true }),
   // Customer (one-hop join)
   str("customer_name", "Customer", "customer", "customer.sf_name"),
   str("customer_city", "Customer city", "customer", "customer.billing_city"),
