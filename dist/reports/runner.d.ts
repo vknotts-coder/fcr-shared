@@ -17,6 +17,7 @@ export type TabularResult = {
     hrefs: (string | null)[];
     rowCount: number;
     truncated: boolean;
+    rowCap: number;
 };
 export type SummaryCell = number | null;
 export type SummaryRow = {

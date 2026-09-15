@@ -6,7 +6,7 @@
 // Each report is registered in ./index.ts. All are admin-only + REPORTS_LIVE-gated at the route; v1 shows
 // admins everything (field-gating is S5).
 
-import { isNumericType, type FieldType } from "../definition.js";
+import { isNumericType, REPORT_ROW_CAP, type FieldType } from "../definition.js";
 import type { CellValue, ReportColumn, TabularResult } from "../runner.js";
 
 /** Format a date/timestamp CellValue to its yyyy-mm-dd head (shared by the readers). Null/empty → "". */
@@ -41,6 +41,7 @@ export function tabular(object: string, cols: CannedColumn[], rows: Record<strin
     hrefs: rows.map(() => null),
     rowCount: rows.length,
     truncated: false,
+    rowCap: REPORT_ROW_CAP, // inert: a canned result is never truncated, but the field is required on the type
   };
 }
 

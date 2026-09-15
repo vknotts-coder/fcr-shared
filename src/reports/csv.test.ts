@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { csvCell, reportToCsv, csvFilename, toCsv } from "./csv.js";
+import { REPORT_ROW_CAP, EXPORT_ROW_CAP } from "./definition.js";
 import type { TabularResult, SummaryResult } from "./runner.js";
 
 describe("csvCell — escaping + formula guard", () => {
@@ -59,6 +60,7 @@ const tabular = (over: Partial<TabularResult> = {}): TabularResult => ({
   hrefs: [null, null],
   rowCount: 2,
   truncated: false,
+  rowCap: REPORT_ROW_CAP,
   ...over,
 });
 
@@ -75,6 +77,21 @@ describe("reportToCsv — tabular", () => {
   });
   it("does NOT append the note when not truncated", () => {
     expect(reportToCsv(tabular())).not.toContain("PARTIAL RESULT");
+  });
+  it("degrades (no throw) to REPORT_ROW_CAP if a truncated result arrives with rowCap absent (foreign/rehydrated)", () => {
+    // reportToCsv is an exported API — a JSON-rehydrated / cross-version result could lack rowCap. It must
+    // print the old constant, never throw on undefined.toLocaleString().
+    const noCap = { ...tabular({ truncated: true, rowCount: 5000 }), rowCap: undefined } as unknown as TabularResult;
+    let csv = "";
+    expect(() => { csv = reportToCsv(noCap); }).not.toThrow();
+    expect(csv).toContain(`capped at the first ${REPORT_ROW_CAP.toLocaleString()} rows`);
+  });
+  it("states the APPLIED cap, not a hardcoded one — a 100k export truncation reports 100,000, not 5,000", () => {
+    // Guard for the #32-review finding: the NOTE used to hardcode REPORT_ROW_CAP, so an export truncated at
+    // EXPORT_ROW_CAP would 20×-understate ("first 5,000 rows"). It must quote result.rowCap.
+    const csv = reportToCsv(tabular({ truncated: true, rowCount: EXPORT_ROW_CAP, rowCap: EXPORT_ROW_CAP }));
+    expect(csv).toContain(`capped at the first ${EXPORT_ROW_CAP.toLocaleString()} rows`); // "100,000"
+    expect(csv).not.toContain("5,000"); // the old hardcoded value must NOT appear
   });
 });
 

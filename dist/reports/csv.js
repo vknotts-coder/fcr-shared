@@ -60,9 +60,16 @@ export function reportToCsv(result) {
         csv = toCsv(header, rows);
     }
     if (result.truncated) {
-        // A tabular result is flagged truncated only after the runner slices to exactly REPORT_ROW_CAP, so the
-        // row count here is always the cap — state that directly rather than "N of the first cap".
-        csv += `\n\nNOTE: PARTIAL RESULT — capped at the first ${REPORT_ROW_CAP.toLocaleString()} rows; the report has more, so these figures are NOT complete. Narrow the filters for exact totals.`;
+        // A result is flagged truncated only after the runner slices to exactly the APPLIED cap, so the row
+        // count here is always that cap — state it directly. Quote the cap the run actually used
+        // (`result.rowCap`: REPORT_ROW_CAP on-screen, EXPORT_ROW_CAP on export), never a hardcoded constant, or
+        // a 100k export would misreport "the first 5,000 rows". Only a tabular result can truncate; the summary
+        // path is DB-side GROUP BY (`truncated` always false), so the fallback is inert.
+        // `?? REPORT_ROW_CAP`: reportToCsv is an exported API of this tarball, so a caller could hand it a
+        // rowCap-less tabular result (a JSON-rehydrated / cross-@fcr/core-version one). Every in-repo producer
+        // sets rowCap, but degrade a missing one to the old constant rather than throw in toLocaleString().
+        const cap = (result.mode === "tabular" ? result.rowCap : undefined) ?? REPORT_ROW_CAP;
+        csv += `\n\nNOTE: PARTIAL RESULT — capped at the first ${cap.toLocaleString()} rows; the report has more, so these figures are NOT complete. Narrow the filters for exact totals.`;
     }
     return csv;
 }

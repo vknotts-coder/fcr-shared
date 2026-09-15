@@ -327,7 +327,7 @@ export async function runReport(raw, principal, db, catalog, opts) {
         const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
         const { rows } = await db.query(q.sql, q.params);
         const truncated = rows.length > rowCap;
-        return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated) };
+        return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated, rowCap) };
     }
     catch (err) {
         // Log the DB error server-side only and return a FIXED generic message — a raw Postgres error can echo
@@ -338,7 +338,7 @@ export async function runReport(raw, principal, db, catalog, opts) {
     }
 }
 // ── Result shaping ───────────────────────────────────────────────────────────────────────────────
-function buildTabular(obj, def, fieldsByKey, rows, truncated) {
+function buildTabular(obj, def, fieldsByKey, rows, truncated, rowCap) {
     const columns = def.columns
         .map((k) => fieldsByKey.get(k))
         .filter((f) => !!f)
@@ -359,7 +359,7 @@ function buildTabular(obj, def, fieldsByKey, rows, truncated) {
             hrefs.push(null);
         }
     }
-    return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated };
+    return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap };
 }
 function summaryLabel(agg, fieldLabel) {
     if (agg === "count")

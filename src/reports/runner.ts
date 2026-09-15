@@ -47,6 +47,9 @@ export type TabularResult = {
   hrefs: (string | null)[];
   rowCount: number;
   truncated: boolean;
+  // The row cap actually applied to THIS run (REPORT_ROW_CAP for the on-screen grid, EXPORT_ROW_CAP for an
+  // export). The truncation NOTE quotes it, so a big-cap export can't misreport "the first 5,000 rows".
+  rowCap: number;
 };
 
 export type SummaryCell = number | null;
@@ -418,7 +421,7 @@ export async function runReport(
     const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
     const { rows } = await db.query<Record<string, unknown>>(q.sql, q.params);
     const truncated = rows.length > rowCap;
-    return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated) };
+    return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated, rowCap) };
   } catch (err) {
     // Log the DB error server-side only and return a FIXED generic message — a raw Postgres error can echo
     // table/column/constraint names or the offending literal, an info-disclosure hook once non-admin /
@@ -436,6 +439,7 @@ function buildTabular(
   fieldsByKey: Map<string, RegistryField>,
   rows: Record<string, unknown>[],
   truncated: boolean,
+  rowCap: number,
 ): TabularResult {
   const columns: ReportColumn[] = def.columns
     .map((k) => fieldsByKey.get(k))
@@ -456,7 +460,7 @@ function buildTabular(
       hrefs.push(null);
     }
   }
-  return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated };
+  return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap };
 }
 
 function summaryLabel(agg: string, fieldLabel: string | undefined): string {
