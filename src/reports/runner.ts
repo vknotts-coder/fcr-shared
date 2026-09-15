@@ -275,12 +275,15 @@ function selectItem(obj: RegistryObject, field: RegistryField): string {
 
 export type BuiltQuery = { sql: string; params: unknown[] };
 
-/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests. */
+/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests.
+ *  `rowCap` is the LIMIT the runner enforces — the on-screen grid passes REPORT_ROW_CAP (the default), the
+ *  CSV export path passes EXPORT_ROW_CAP; the `+ 1` probe detects "there are more" for either. */
 export function buildTabularQuery(
   obj: RegistryObject,
   def: ReportDefinition,
   fieldsByKey: Map<string, RegistryField>,
   principal: Principal,
+  rowCap: number = REPORT_ROW_CAP,
 ): BuiltQuery {
   const cols = def.columns.map((k) => fieldsByKey.get(k)).filter((f): f is RegistryField => !!f);
   const items = cols.map((f) => selectItem(obj, f));
@@ -295,7 +298,7 @@ export function buildTabularQuery(
   }
 
   const sql =
-    `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${REPORT_ROW_CAP + 1}`;
+    `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${rowCap + 1}`;
   return { sql, params: where.params };
 }
 
@@ -388,7 +391,14 @@ export function validateReport(raw: unknown, principal: Principal, catalog: Regi
  *  reportable-object registry (the app passes its `REPORT_OBJECTS`). Keeping BOTH the DB handle and the
  *  catalog parameters, not imports, is what makes this engine app-agnostic and lift-ready into
  *  @fcr/core/reports — it imports no app module. */
-export async function runReport(raw: unknown, principal: Principal, db: Queryable, catalog: RegistryObject[]): Promise<RunOutcome> {
+export async function runReport(
+  raw: unknown,
+  principal: Principal,
+  db: Queryable,
+  catalog: RegistryObject[],
+  opts?: { rowCap?: number },
+): Promise<RunOutcome> {
+  const rowCap = opts?.rowCap ?? REPORT_ROW_CAP; // export routes pass EXPORT_ROW_CAP; on-screen runs use the default
   const validated = validateReport(raw, principal, catalog);
   if (!validated.ok) return { ok: false, errors: validated.errors };
   const { obj, def } = validated;
@@ -405,10 +415,10 @@ export async function runReport(raw: unknown, principal: Principal, db: Queryabl
       ]);
       return { ok: true, result: buildSummaryResult(obj, def, fieldsByKey, grouped.rows, total.rows[0]) };
     }
-    const q = buildTabularQuery(obj, def, fieldsByKey, principal);
+    const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
     const { rows } = await db.query<Record<string, unknown>>(q.sql, q.params);
-    const truncated = rows.length > REPORT_ROW_CAP;
-    return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, REPORT_ROW_CAP) : rows, truncated) };
+    const truncated = rows.length > rowCap;
+    return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated) };
   } catch (err) {
     // Log the DB error server-side only and return a FIXED generic message — a raw Postgres error can echo
     // table/column/constraint names or the offending literal, an info-disclosure hook once non-admin /

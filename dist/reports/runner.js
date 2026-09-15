@@ -214,8 +214,10 @@ function linkActive(obj) {
 function selectItem(obj, field) {
     return `${fieldExpr(obj, field)} AS ${ident(field.key)}`;
 }
-/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests. */
-export function buildTabularQuery(obj, def, fieldsByKey, principal) {
+/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests.
+ *  `rowCap` is the LIMIT the runner enforces — the on-screen grid passes REPORT_ROW_CAP (the default), the
+ *  CSV export path passes EXPORT_ROW_CAP; the `+ 1` probe detects "there are more" for either. */
+export function buildTabularQuery(obj, def, fieldsByKey, principal, rowCap = REPORT_ROW_CAP) {
     const cols = def.columns.map((k) => fieldsByKey.get(k)).filter((f) => !!f);
     const items = cols.map((f) => selectItem(obj, f));
     if (linkActive(obj))
@@ -227,7 +229,7 @@ export function buildTabularQuery(obj, def, fieldsByKey, principal) {
         if (meta)
             orderBy = ` ORDER BY ${fieldExpr(obj, meta)} ${def.sort.dir === "desc" ? "DESC" : "ASC"}`;
     }
-    const sql = `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${REPORT_ROW_CAP + 1}`;
+    const sql = `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${rowCap + 1}`;
     return { sql, params: where.params };
 }
 /** The SQL expression a summary groups by: a non-date field's column, or a date field bucketed to
@@ -304,7 +306,8 @@ export function validateReport(raw, principal, catalog) {
  *  reportable-object registry (the app passes its `REPORT_OBJECTS`). Keeping BOTH the DB handle and the
  *  catalog parameters, not imports, is what makes this engine app-agnostic and lift-ready into
  *  @fcr/core/reports — it imports no app module. */
-export async function runReport(raw, principal, db, catalog) {
+export async function runReport(raw, principal, db, catalog, opts) {
+    const rowCap = opts?.rowCap ?? REPORT_ROW_CAP; // export routes pass EXPORT_ROW_CAP; on-screen runs use the default
     const validated = validateReport(raw, principal, catalog);
     if (!validated.ok)
         return { ok: false, errors: validated.errors };
@@ -321,10 +324,10 @@ export async function runReport(raw, principal, db, catalog) {
             ]);
             return { ok: true, result: buildSummaryResult(obj, def, fieldsByKey, grouped.rows, total.rows[0]) };
         }
-        const q = buildTabularQuery(obj, def, fieldsByKey, principal);
+        const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
         const { rows } = await db.query(q.sql, q.params);
-        const truncated = rows.length > REPORT_ROW_CAP;
-        return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, REPORT_ROW_CAP) : rows, truncated) };
+        const truncated = rows.length > rowCap;
+        return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated) };
     }
     catch (err) {
         // Log the DB error server-side only and return a FIXED generic message — a raw Postgres error can echo

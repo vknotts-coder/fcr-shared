@@ -59,8 +59,10 @@ export type BuiltQuery = {
     sql: string;
     params: unknown[];
 };
-/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests. */
-export declare function buildTabularQuery(obj: RegistryObject, def: ReportDefinition, fieldsByKey: Map<string, RegistryField>, principal: Principal): BuiltQuery;
+/** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests.
+ *  `rowCap` is the LIMIT the runner enforces — the on-screen grid passes REPORT_ROW_CAP (the default), the
+ *  CSV export path passes EXPORT_ROW_CAP; the `+ 1` probe detects "there are more" for either. */
+export declare function buildTabularQuery(obj: RegistryObject, def: ReportDefinition, fieldsByKey: Map<string, RegistryField>, principal: Principal, rowCap?: number): BuiltQuery;
 /**
  * Exact, UNCAPPED summary via a real DB-side GROUP BY (replaces the earlier JS-aggregation-over-a-capped
  * window, which silently under-counted once a scoped set exceeded the row cap). Groups + aggregates are
@@ -91,6 +93,8 @@ export declare function validateReport(raw: unknown, principal: Principal, catal
  *  reportable-object registry (the app passes its `REPORT_OBJECTS`). Keeping BOTH the DB handle and the
  *  catalog parameters, not imports, is what makes this engine app-agnostic and lift-ready into
  *  @fcr/core/reports — it imports no app module. */
-export declare function runReport(raw: unknown, principal: Principal, db: Queryable, catalog: RegistryObject[]): Promise<RunOutcome>;
+export declare function runReport(raw: unknown, principal: Principal, db: Queryable, catalog: RegistryObject[], opts?: {
+    rowCap?: number;
+}): Promise<RunOutcome>;
 export declare function sortSummaryRows(rows: SummaryRow[], columns: ReportColumn[], sort: ReportSort | null | undefined, groupKey?: string): SummaryRow[];
 //# sourceMappingURL=runner.d.ts.map

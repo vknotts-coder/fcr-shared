@@ -166,6 +166,12 @@ export function parseFilterLogic(logic: string, count: number): { ok: true; ast:
 // capped window; a report exceeding it is flagged `truncated` rather than silently under-counting.
 export const REPORT_ROW_CAP = 5000;
 
+// The row cap the CSV EXPORT path applies — much higher than the on-screen grid cap, so a shared file is
+// the full extract rather than the first 5000 rows. It is a backstop, not a UI limit: every real fcr_core
+// object is small (the largest, trucks, is ~4k rows), so this never bites live data; it only bounds a
+// runaway generic query, and if it ever IS hit the `truncated` flag + the CSV's trailing NOTE still fire.
+export const EXPORT_ROW_CAP = 100_000;
+
 // Definition-size caps: a definition is authenticated-user input that's both run AND persisted, so bound
 // each array so nobody can POST a 50k-column/filter definition → a giant WHERE/SELECT + bloated stored
 // JSON. Generous vs. any real report.

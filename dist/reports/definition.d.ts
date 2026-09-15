@@ -78,6 +78,7 @@ export declare function parseFilterLogic(logic: string, count: number): {
     error: string;
 };
 export declare const REPORT_ROW_CAP = 5000;
+export declare const EXPORT_ROW_CAP = 100000;
 export declare const MAX_COLUMNS = 60;
 export declare const MAX_FILTERS = 40;
 export declare const MAX_SUMMARIES = 20;

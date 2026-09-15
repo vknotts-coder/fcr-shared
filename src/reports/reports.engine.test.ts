@@ -10,9 +10,13 @@ import {
   toClientObject,
   validateReport,
   buildTabularQuery,
+  runReport,
+  REPORT_ROW_CAP,
+  EXPORT_ROW_CAP,
   type RegistryObject,
   type RegistryField,
 } from "./index.js";
+import type { Queryable } from "../rbac/index.js";
 
 const widget: RegistryObject = {
   key: "widget",
@@ -218,5 +222,55 @@ describe("filterLogic — no orphan bind params when a filter is omitted (#103 d
     });
     expect(q.params).toEqual(["a", "open"]);
     expect(q.params.length).toBe(maxPlaceholder(q.sql));
+  });
+});
+
+describe("row cap seam — on-screen default vs the higher CSV export cap", () => {
+  const validTabular = (rowCap?: number) => {
+    const v = validateReport({ object: "widget", columns: ["name", "status"], filters: [], summaries: [] }, admin, catalog);
+    if (!v.ok) throw new Error(v.errors.join("; "));
+    const fieldsByKey = new Map(v.obj.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    return buildTabularQuery(v.obj, v.def, fieldsByKey, admin, rowCap);
+  };
+
+  it("buildTabularQuery defaults to the on-screen cap (LIMIT REPORT_ROW_CAP + 1 probe)", () => {
+    expect(validTabular().sql).toContain(`LIMIT ${REPORT_ROW_CAP + 1}`);
+  });
+
+  it("buildTabularQuery honors an explicit export cap (LIMIT EXPORT_ROW_CAP + 1)", () => {
+    expect(EXPORT_ROW_CAP).toBeGreaterThan(REPORT_ROW_CAP); // the export cap is the higher of the two
+    expect(validTabular(EXPORT_ROW_CAP).sql).toContain(`LIMIT ${EXPORT_ROW_CAP + 1}`);
+  });
+
+  // A stub db returning N rows regardless of the SQL — so we can prove the runner's truncation decision
+  // is driven by the passed rowCap, not a hardcoded constant.
+  const dbReturning = (rowCount: number): Queryable => ({
+    query: async <T = unknown>() =>
+      ({ rows: Array.from({ length: rowCount }, (_, i) => ({ name: `w${i}`, status: "open" })) as T[] }),
+  });
+  const def = { object: "widget", columns: ["name", "status"], filters: [], summaries: [] };
+
+  it("runReport truncates a >default-cap result at the default cap (on-screen behavior unchanged)", async () => {
+    const out = await runReport(def, admin, dbReturning(REPORT_ROW_CAP + 1), catalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok || out.result.mode !== "tabular") throw new Error("expected tabular");
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.rows.length).toBe(REPORT_ROW_CAP);
+  });
+
+  it("runReport with the export cap does NOT truncate that same result — the export gets every row", async () => {
+    const out = await runReport(def, admin, dbReturning(REPORT_ROW_CAP + 1), catalog, { rowCap: EXPORT_ROW_CAP });
+    expect(out.ok).toBe(true);
+    if (!out.ok || out.result.mode !== "tabular") throw new Error("expected tabular");
+    expect(out.result.truncated).toBe(false);
+    expect(out.result.rows.length).toBe(REPORT_ROW_CAP + 1);
+  });
+
+  it("the export cap is still a backstop: a result beyond it truncates + flags (the NOTE still fires)", async () => {
+    const out = await runReport(def, admin, dbReturning(EXPORT_ROW_CAP + 1), catalog, { rowCap: EXPORT_ROW_CAP });
+    expect(out.ok).toBe(true);
+    if (!out.ok || out.result.mode !== "tabular") throw new Error("expected tabular");
+    expect(out.result.truncated).toBe(true);
+    expect(out.result.rows.length).toBe(EXPORT_ROW_CAP);
   });
 });
