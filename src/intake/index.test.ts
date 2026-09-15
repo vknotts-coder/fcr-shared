@@ -130,6 +130,28 @@ describe("createUnit", () => {
     expect(insert!.text).toContain("created_at, updated_at");
   });
 
+  it("reference existence check filters soft-deleted rows (deleted_at IS NULL) and blocks on not-found", async () => {
+    const { db, calls } = fakeDb((text) => {
+      // Reference SELECT returns no rows (row is soft-deleted / absent) → reference not found.
+      if (text.startsWith("SELECT 1")) return { rows: [] };
+      return { rows: [], rowCount: 1 };
+    });
+    const res = await createUnit(
+      trailerSpec,
+      form({ sf_name: "NEW-3", fcr_collision_account: "gone", fcr_collision_contact: "c" }),
+      { username: "vknotts", name: "Van" },
+      db,
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok && "errors" in res) {
+      expect(res.errors.map((e) => e.field)).toContain("fcr_collision_account");
+    }
+    // The fix: the reference query must exclude soft-deleted rows.
+    const refCall = calls.find((c) => c.text.startsWith("SELECT 1"));
+    expect(refCall?.text).toContain("deleted_at IS NULL");
+    expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
+  });
+
   it("blocks a create missing the required account/contact (no INSERT)", async () => {
     const { db, calls } = fakeDb(() => ({ rows: [], rowCount: 1 }));
     const res = await createUnit(truckSpec, form({ sf_name: "T-1" }), { username: "vknotts", name: "Van" }, db);
