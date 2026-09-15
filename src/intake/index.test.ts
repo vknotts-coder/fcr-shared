@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createUnit, findDuplicates } from "./pipeline.js";
-import { applyTrailerStatusEngine, trailerSpec } from "./specs/trailer.js";
-import { applyTruckStatusEngine, truckSpec } from "./specs/truck.js";
+import { applyTrailerStatusEngine, validateTrailer, trailerSpec } from "./specs/trailer.js";
+import { applyTruckStatusEngine, validateTruck, truckSpec } from "./specs/truck.js";
 import type { Queryable } from "../rbac/index.js";
 
 // A programmable fake Queryable: hand it a handler that returns rows (+ optional rowCount) per
@@ -69,6 +69,38 @@ describe("truck status engine (create seed)", () => {
   it("an explicit status pick is not overridden by the seed", () => {
     const r = applyTruckStatusEngine({}, { status: "Awaiting Pickup", pickup_city: "" }, { isNew: true, today: TODAY });
     expect(r.derived.status).toBeUndefined(); // user's pick stands; engine doesn't seed over it
+  });
+});
+
+describe("VIN length validation (varchar 17 — no 500)", () => {
+  it("trailer: an 18-char full_vin is rejected; 17 passes", () => {
+    const over = validateTrailer({ full_vin: "VANPICKERVERIFYVIN" /* 18 */ }, { isNew: false });
+    expect(over.some((e) => e.field === "full_vin")).toBe(true);
+    // negative control: exactly 17 chars is accepted (no VIN error)
+    const ok = validateTrailer({ full_vin: "1GR1A0625ME306619" /* 17 */ }, { isNew: false });
+    expect(ok.some((e) => e.field === "full_vin")).toBe(false);
+  });
+  it("truck: an 18-char vin is rejected; 17 passes", () => {
+    const over = validateTruck({ vin: "VANPICKERVERIFYVIN" /* 18 */ }, { isNew: false });
+    expect(over.some((e) => e.field === "vin")).toBe(true);
+    const ok = validateTruck({ vin: "1HGCM82633A00PICK" /* 17 */ }, { isNew: false });
+    expect(ok.some((e) => e.field === "vin")).toBe(false);
+  });
+  it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
+    const { db, calls } = fakeDb((text) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
+      return { rows: [], rowCount: 1 };
+    });
+    const res = await createUnit(
+      trailerSpec,
+      form({ sf_name: "N", fcr_collision_account: "a", fcr_collision_contact: "c", full_vin: "VANPICKERVERIFYVIN" }),
+      { username: "vknotts", name: "Van" },
+      db,
+      { confirmDuplicate: true },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok && "errors" in res) expect(res.errors.map((e) => e.field)).toContain("full_vin");
+    expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
   });
 });
 

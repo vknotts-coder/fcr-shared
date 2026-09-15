@@ -4,7 +4,7 @@
 // synchronous. Only the app coupling (TRAILER_STATUS_ORDER, centralToday, SectionKey) is
 // internalized so the module carries no fcr-trailers import.
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
 // The two special pickup/delivery "driver" values the SF validation rules key on.
 const CUSTOMER_DROP_OFF = "CUSTOMER DROP OFF";
 const CUSTOMER_PICKUP = "CUSTOMER PICKUP";
@@ -219,6 +219,11 @@ function applyCompletionAndRework(derived, edits, eff, before) {
 export function validateTrailer(state, opts = {}) {
     const errors = [];
     const status = state.status;
+    // VIN fits the fcr_core.trailer.full_vin column (varchar 17) — reject over-length as a friendly
+    // error rather than letting the INSERT overflow and 500.
+    if (typeof state.full_vin === "string" && state.full_vin.trim().length > VIN_MAX_LENGTH) {
+        errors.push({ field: "full_vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
+    }
     if (status === "Awaiting Pickup" &&
         state.pickup_driver !== CUSTOMER_DROP_OFF &&
         ["pickup_address", "pickup_city", "pickup_state", "pickup_zip_code"].every((f) => isBlank(state[f]))) {

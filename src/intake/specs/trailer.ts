@@ -5,7 +5,7 @@
 // internalized so the module carries no fcr-trailers import.
 
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 
 // The two special pickup/delivery "driver" values the SF validation rules key on.
@@ -240,6 +240,12 @@ export function validateTrailer(
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   const status = state.status;
+
+  // VIN fits the fcr_core.trailer.full_vin column (varchar 17) — reject over-length as a friendly
+  // error rather than letting the INSERT overflow and 500.
+  if (typeof state.full_vin === "string" && state.full_vin.trim().length > VIN_MAX_LENGTH) {
+    errors.push({ field: "full_vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
+  }
 
   if (
     status === "Awaiting Pickup" &&

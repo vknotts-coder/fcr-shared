@@ -6,7 +6,7 @@
 // status change, nothing more. Columns verified against fcr-dispatch db/fcr_core.schema.sql.
 
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 
 const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
@@ -84,6 +84,12 @@ export function validateTruck(
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   const status = state.status;
+
+  // VIN fits the fcr_core.truck.vin column (varchar 17) — reject over-length as a friendly error
+  // rather than letting the INSERT overflow and 500.
+  if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
+    errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
+  }
 
   if (
     status === "Awaiting Pickup" &&
