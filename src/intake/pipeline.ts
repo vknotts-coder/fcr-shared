@@ -51,7 +51,10 @@ async function checkReferences(
     if (typeof val === "string" && val && val !== before[ref.column]) {
       checks.push(
         db
-          .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE sf_id = $1 LIMIT 1`, [val])
+          // `deleted_at IS NULL` matches the dedupe + update reads (sf_id survives a soft delete),
+          // so a soft-deleted account/contact resolves as not-found rather than a dangling soft-FK
+          // that reverse-sync would push to the real SF org.
+          .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE sf_id = $1 AND deleted_at IS NULL LIMIT 1`, [val])
           .then((r) =>
             r.rows.length === 0
               ? { field: ref.column, message: `${ref.label} "${val}" was not found — pick a valid ${ref.label}.` }
