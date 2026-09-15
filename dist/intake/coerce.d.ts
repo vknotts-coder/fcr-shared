@@ -1,6 +1,9 @@
 import type { FormField } from "./types.js";
 /** True for null/undefined or an all-whitespace string — one definition of "empty field". */
 export declare function isBlank(v: unknown): boolean;
+/** Max VIN length — the fcr_core truck.vin / trailer.full_vin columns are varchar(17). A longer
+ *  value would overflow the column and 500 the create; the specs reject it as a friendly error. */
+export declare const VIN_MAX_LENGTH = 17;
 export declare const US_STATES: string[];
 /**
  * Coerce a raw string to the typed value for its column. Blank → null. Numeric columns →

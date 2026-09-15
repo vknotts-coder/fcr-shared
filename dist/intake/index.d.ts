@@ -1,6 +1,6 @@
 export * from "./types.js";
 export * from "./sections.js";
-export { isBlank, US_STATES, coerceField, parseEdits } from "./coerce.js";
+export { isBlank, US_STATES, VIN_MAX_LENGTH, coerceField, parseEdits } from "./coerce.js";
 export { createUnit, updateUnit, findDuplicates } from "./pipeline.js";
 export { trailerSpec, applyTrailerStatusEngine, validateTrailer, TRAILER_FORM_FIELDS } from "./specs/trailer.js";
 export { truckSpec, applyTruckStatusEngine, validateTruck, TRUCK_FORM_FIELDS } from "./specs/truck.js";

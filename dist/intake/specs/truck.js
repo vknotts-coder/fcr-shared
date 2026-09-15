@@ -5,7 +5,7 @@
 // this seeds the initial status from the pickup arrangement and stamps status_date on a manual
 // status change, nothing more. Columns verified against fcr-dispatch db/fcr_core.schema.sql.
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
 const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
@@ -71,6 +71,11 @@ export function applyTruckStatusEngine(before, edits, opts = {}) {
 export function validateTruck(state, opts = {}) {
     const errors = [];
     const status = state.status;
+    // VIN fits the fcr_core.truck.vin column (varchar 17) — reject over-length as a friendly error
+    // rather than letting the INSERT overflow and 500.
+    if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
+        errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
+    }
     if (status === "Awaiting Pickup" &&
         state.pickup_tow_drive !== CUSTOMER_DROP_OFF_MODE &&
         ["pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"].every((f) => isBlank(state[f]))) {

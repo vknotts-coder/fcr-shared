@@ -9,6 +9,10 @@ export function isBlank(v: unknown): boolean {
   return v == null || (typeof v === "string" && v.trim() === "");
 }
 
+/** Max VIN length — the fcr_core truck.vin / trailer.full_vin columns are varchar(17). A longer
+ *  value would overflow the column and 500 the create; the specs reject it as a friendly error. */
+export const VIN_MAX_LENGTH = 17;
+
 export const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
 ];
