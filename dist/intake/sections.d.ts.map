@@ -1,0 +1,1 @@
+{"version":3,"file":"sections.d.ts","sourceRoot":"","sources":["../../src/intake/sections.ts"],"names":[],"mappings":"AAIA,MAAM,MAAM,UAAU,GAClB,aAAa,GACb,oBAAoB,GACpB,UAAU,GACV,OAAO,GACP,QAAQ,GACR,oBAAoB,GACpB,SAAS,GACT,QAAQ,GACR,QAAQ,CAAC;AAEb,eAAO,MAAM,cAAc,EAAE,MAAM,CAAC,UAAU,EAAE,MAAM,CAUrD,CAAC;AAEF,qEAAqE;AACrE,eAAO,MAAM,aAAa,EAAE,UAAU,EAUrC,CAAC"}

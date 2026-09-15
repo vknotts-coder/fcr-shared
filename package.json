@@ -1,6 +1,6 @@
 {
   "name": "@fcr/core",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
@@ -53,6 +53,10 @@
     "./catalog/listviews": {
       "types": "./dist/catalog/listviews.d.ts",
       "default": "./dist/catalog/listviews.js"
+    },
+    "./intake": {
+      "types": "./dist/intake/index.d.ts",
+      "default": "./dist/intake/index.js"
     }
   },
   "files": [
