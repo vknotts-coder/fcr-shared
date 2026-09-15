@@ -70,7 +70,10 @@ export function reportToCsv(result: ReportResult): string {
     // (`result.rowCap`: REPORT_ROW_CAP on-screen, EXPORT_ROW_CAP on export), never a hardcoded constant, or
     // a 100k export would misreport "the first 5,000 rows". Only a tabular result can truncate; the summary
     // path is DB-side GROUP BY (`truncated` always false), so the fallback is inert.
-    const cap = result.mode === "tabular" ? result.rowCap : REPORT_ROW_CAP;
+    // `?? REPORT_ROW_CAP`: reportToCsv is an exported API of this tarball, so a caller could hand it a
+    // rowCap-less tabular result (a JSON-rehydrated / cross-@fcr/core-version one). Every in-repo producer
+    // sets rowCap, but degrade a missing one to the old constant rather than throw in toLocaleString().
+    const cap = (result.mode === "tabular" ? result.rowCap : undefined) ?? REPORT_ROW_CAP;
     csv += `\n\nNOTE: PARTIAL RESULT — capped at the first ${cap.toLocaleString()} rows; the report has more, so these figures are NOT complete. Narrow the filters for exact totals.`;
   }
   return csv;
