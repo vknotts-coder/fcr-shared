@@ -187,7 +187,7 @@ export function applyTrailerStatusEngine(
     if (isBlank(eff("notify_date"))) derived.notify_date = todayStr;
     setStatus(initial, todayStr);
     if (!emails.includes("FCR_Trailers_Awaiting_Pickup")) emails.push("FCR_Trailers_Awaiting_Pickup");
-    applyCompletionAndRework(derived, edits, eff, before);
+    applyCompletionAndRework(derived, edits, eff, before, todayStr, true);
     return { derived, statusChanged: true, fromStatus, toStatus: initial, emails };
   }
 
@@ -224,7 +224,7 @@ export function applyTrailerStatusEngine(
     emails.push("FCR_Trailers_Estimate_Finalized");
   }
 
-  applyCompletionAndRework(derived, edits, eff, before);
+  applyCompletionAndRework(derived, edits, eff, before, todayStr, false);
   const toStatus = (derived.status as string | undefined) ?? fromStatus;
   return { derived, statusChanged: !!derived.status, fromStatus, toStatus: toStatus ?? null, emails };
 }
@@ -234,20 +234,33 @@ function applyCompletionAndRework(
   edits: Record<string, unknown>,
   eff: (f: string) => unknown,
   before: Record<string, unknown>,
+  today: string,
+  isNew: boolean,
 ): void {
+  // Rework coupling — bidirectional + auto-date (SCOPE §924, Van 2026-09-16). The rework checkbox
+  // and the REWORK status always agree, and turning rework on is TERMINAL: it overrides the
+  // completion/delivery-routing derivations below, so status and the rework flag can never disagree
+  // (the review found the old ordering let "Awaiting Customer Pickup" clobber status back while
+  // rework stayed true). "Turning rework on" = the checkbox edited false→true (EDIT only — a
+  // brand-new unit can't be in rework) OR the status picked → REWORK.
+  const checkboxTurnedOn = !isNew && edits.rework === true && before.rework !== true;
+  const statusPickedRework = edits.status === "REWORK" && before.status !== "REWORK";
+  if (checkboxTurnedOn || statusPickedRework) {
+    derived.rework = true;
+    if (isBlank(eff("rework_date"))) derived.rework_date = today;
+    // Advance status + stamp status_date ONLY on a real transition — re-ticking rework on a unit
+    // already in REWORK must not re-stamp status_date or report a phantom status change.
+    if (before.status !== "REWORK") {
+      derived.status = "REWORK";
+      derived.status_date = today;
+      const name = (eff("sf_name") as string | null) ?? "";
+      if (name && !/ - REWORK$/i.test(name)) derived.sf_name = `${name} - REWORK`;
+    }
+    return; // terminal — skip completion / delivery-routing so status can't be clobbered off REWORK
+  }
+
   const effStatus = (derived.status as string) ?? (before.status as string | null);
   if (effStatus === "Repair Complete") derived.completetion_percentage = 100;
-  // Rework: picking status REWORK advances status + appends " - REWORK" to the name (SF flow D).
-  // The rework boolean + rework_date/_start/_end are now DIRECTLY EDITABLE fields (form), not
-  // engine-derived. Whether ticking the rework checkbox should also auto-advance status→REWORK (or
-  // vice-versa) is an open SF-fidelity question for Matt (SCOPE §924) — deliberately NOT invented
-  // here; the two are independent until that's answered.
-  const reworkPicked = edits.status === "REWORK" && before.status !== "REWORK";
-  if (reworkPicked) {
-    derived.status = "REWORK";
-    const name = (eff("sf_name") as string | null) ?? "";
-    if (name && !/ - REWORK$/i.test(name)) derived.sf_name = `${name} - REWORK`;
-  }
   if (effStatus === "Awaiting Delivery" && eff("delivery_driver") === CUSTOMER_PICKUP) {
     derived.status = "Awaiting Customer Pickup";
   }
