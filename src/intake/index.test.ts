@@ -278,3 +278,60 @@ describe("trailer SF-parity fields — editable (Piece B)", () => {
     expect(r.derived.invoice_date).toBeUndefined();
   });
 });
+
+// ── Rework coupling — bidirectional + auto-date (SCOPE §924, Van 2026-09-16) ────────
+describe("trailer rework coupling — checkbox ↔ REWORK status", () => {
+  it("ticking rework=Yes advances status→REWORK, sets rework + rework_date + status_date + name", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Repair in Progress", sf_name: "T-200", rework: false },
+      { rework: true },
+      { today: TODAY },
+    );
+    expect(r.derived.status).toBe("REWORK");
+    expect(r.derived.rework).toBe(true);
+    expect(r.derived.rework_date).toBe(TODAY);
+    expect(r.derived.status_date).toBe(TODAY);
+    expect(r.derived.sf_name).toBe("T-200 - REWORK");
+  });
+
+  it("picking status REWORK also sets the rework checkbox + rework_date (the other direction)", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Repair Complete", sf_name: "T-201" },
+      { status: "REWORK" },
+      { today: TODAY },
+    );
+    expect(r.derived.status).toBe("REWORK");
+    expect(r.derived.rework).toBe(true);
+    expect(r.derived.rework_date).toBe(TODAY);
+  });
+
+  it("does not overwrite an existing rework_date", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Repair in Progress", rework: false, rework_date: "2026-01-01" },
+      { rework: true },
+      { today: TODAY },
+    );
+    expect(r.derived.status).toBe("REWORK");
+    expect(r.derived.rework_date).toBeUndefined(); // before already had one → not re-stamped
+  });
+
+  it("no churn when rework is already on", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "REWORK", rework: true, sf_name: "T-202 - REWORK" },
+      { rework: true },
+      { today: TODAY },
+    );
+    expect(r.derived.status).toBeUndefined();
+    expect(r.derived.rework).toBeUndefined();
+    expect(r.derived.sf_name).toBeUndefined();
+  });
+
+  it("a non-REWORK status change does not force rework on", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Approved", rework: false },
+      { status: "Repair in Progress" },
+      { today: TODAY },
+    );
+    expect(r.derived.rework).toBeUndefined();
+  });
+});

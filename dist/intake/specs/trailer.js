@@ -175,7 +175,7 @@ export function applyTrailerStatusEngine(before, edits, opts = {}) {
         setStatus(initial, todayStr);
         if (!emails.includes("FCR_Trailers_Awaiting_Pickup"))
             emails.push("FCR_Trailers_Awaiting_Pickup");
-        applyCompletionAndRework(derived, edits, eff, before);
+        applyCompletionAndRework(derived, edits, eff, before, todayStr);
         return { derived, statusChanged: true, fromStatus, toStatus: initial, emails };
     }
     let advanced = null;
@@ -210,22 +210,27 @@ export function applyTrailerStatusEngine(before, edits, opts = {}) {
     if (!isBlank(edits.estimate_finalized) && isBlank(before.estimate_finalized)) {
         emails.push("FCR_Trailers_Estimate_Finalized");
     }
-    applyCompletionAndRework(derived, edits, eff, before);
+    applyCompletionAndRework(derived, edits, eff, before, todayStr);
     const toStatus = derived.status ?? fromStatus;
     return { derived, statusChanged: !!derived.status, fromStatus, toStatus: toStatus ?? null, emails };
 }
-function applyCompletionAndRework(derived, edits, eff, before) {
+function applyCompletionAndRework(derived, edits, eff, before, today) {
     const effStatus = derived.status ?? before.status;
     if (effStatus === "Repair Complete")
         derived.completetion_percentage = 100;
-    // Rework: picking status REWORK advances status + appends " - REWORK" to the name (SF flow D).
-    // The rework boolean + rework_date/_start/_end are now DIRECTLY EDITABLE fields (form), not
-    // engine-derived. Whether ticking the rework checkbox should also auto-advance status→REWORK (or
-    // vice-versa) is an open SF-fidelity question for Matt (SCOPE §924) — deliberately NOT invented
-    // here; the two are independent until that's answered.
-    const reworkPicked = edits.status === "REWORK" && before.status !== "REWORK";
-    if (reworkPicked) {
+    // Rework coupling — bidirectional + auto-date (SCOPE §924, Van 2026-09-16). The rework checkbox
+    // and the REWORK status always agree. "Turning rework on" is EITHER the checkbox edited false→true
+    // OR the status picked → REWORK; either way we advance status → REWORK, set rework = true, append
+    // the " - REWORK" name suffix, and stamp rework_date + status_date (today) if not already set —
+    // matching how the engine stamps other milestone dates. Single pass, so no checkbox↔status loop.
+    const reworkTurningOn = (edits.rework === true && before.rework !== true) ||
+        (edits.status === "REWORK" && before.status !== "REWORK");
+    if (reworkTurningOn) {
         derived.status = "REWORK";
+        derived.status_date = today;
+        derived.rework = true;
+        if (isBlank(eff("rework_date")))
+            derived.rework_date = today;
         const name = eff("sf_name") ?? "";
         if (name && !/ - REWORK$/i.test(name))
             derived.sf_name = `${name} - REWORK`;
