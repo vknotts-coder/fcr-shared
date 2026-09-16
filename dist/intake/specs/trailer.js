@@ -269,6 +269,19 @@ export function validateTrailer(state, opts = {}) {
     if (status === "Awaiting Customer Pickup" && state.delivery_driver !== CUSTOMER_PICKUP) {
         errors.push({ field: "delivery_driver", message: "Status can not be Awaiting Customer Pickup unless Delivery Driver is set to CUSTOMER PICKUP." });
     }
+    // Rework coupling (§924, Van 2026-09-16) — the rework flag and the REWORK status must agree.
+    // Turn-ON is handled by the status engine; these guard the two ways a disagreement could still be
+    // persisted (both enforced server-side on the real write path, so a crafted POST can't bypass the UI):
+    //  - EDIT turn-off: can't clear rework while the unit is in REWORK (change the status first). `=== false`
+    //    (not blank) so a legacy/SF-synced null doesn't trip it — only an explicit clear.
+    //  - CREATE: a new unit can't be born in rework with a non-REWORK status (the create form hides the
+    //    rework fields, but a non-UI submit would otherwise merge rework=true straight through).
+    if (status === "REWORK" && state.rework === false) {
+        errors.push({ field: "rework", message: "Rework can not be cleared while the status is REWORK — change the status first." });
+    }
+    if (opts.isNew && state.rework === true && status !== "REWORK") {
+        errors.push({ field: "rework", message: "A new trailer can't be marked Rework unless its status is REWORK." });
+    }
     if (opts.isNew) {
         if (isBlank(state.fcr_collision_account)) {
             errors.push({ field: "fcr_collision_account", message: "FCR Collision Account is a required field. Please select the Account." });
