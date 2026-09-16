@@ -372,3 +372,30 @@ describe("trailer rework coupling — checkbox ↔ REWORK status", () => {
     expect(r.derived.rework).toBeUndefined(); // engine doesn't auto-force it on create
   });
 });
+
+// ── Rework validation guards — enforce the invariant server-side (§924, review #39) ────────
+describe("trailer rework validation guards", () => {
+  it("EDIT turn-off: blocks clearing rework while status is REWORK", () => {
+    expect(validateTrailer({ status: "REWORK", rework: false }, { isNew: false }).some((e) => e.field === "rework")).toBe(true);
+  });
+  it("allows rework=false when status is not REWORK", () => {
+    expect(validateTrailer({ status: "Approved", rework: false }, {}).some((e) => e.field === "rework")).toBe(false);
+  });
+  it("does not trip on a legacy null rework while REWORK (only an explicit clear)", () => {
+    expect(validateTrailer({ status: "REWORK", rework: null }, {}).some((e) => e.field === "rework")).toBe(false);
+  });
+  it("CREATE: blocks rework=true with a non-REWORK status (the crafted-POST hole)", () => {
+    expect(
+      validateTrailer({ status: "Received", rework: true, fcr_collision_account: "a", fcr_collision_contact: "c" }, { isNew: true }).some(
+        (e) => e.field === "rework",
+      ),
+    ).toBe(true);
+  });
+  it("CREATE: allows rework=true when status IS REWORK", () => {
+    expect(
+      validateTrailer({ status: "REWORK", rework: true, fcr_collision_account: "a", fcr_collision_contact: "c" }, { isNew: true }).some(
+        (e) => e.field === "rework",
+      ),
+    ).toBe(false);
+  });
+});
