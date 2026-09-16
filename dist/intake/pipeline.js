@@ -171,6 +171,14 @@ export async function updateUnit(spec, id, formData, actor, db) {
         return { ok: true, id, emails: [] };
     cols.updated_by = actor.name;
     cols.local_edit_at = new Date();
+    // Field-scoped reverse-sync (fcr-dispatch #119): union the columns that actually changed into
+    // dispatch_dirty_cols, so the reverse push (pushDispatchEdits) can send ONLY what changed instead
+    // of a whole-row PATCH that could clobber a concurrent SF-desk edit. The push intersects this with
+    // its own DISPATCH_COLS allowlist, so recording every changed business column here is sufficient —
+    // this package needn't know which columns are reverse-synced. Inert until DISPATCH_FIELD_SCOPED_SYNC
+    // is on (the reverse sync ignores the column otherwise); safe to populate now. `changes` is
+    // non-empty here (the no-op guard returned above), so this never writes an empty array.
+    const dirtyCols = changes.map((c) => c.field);
     const keys = Object.keys(cols);
     const setClause = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
     // Build the chokepoint statement with eventInsert and run it via db so we can read the
@@ -187,9 +195,11 @@ export async function updateUnit(spec, id, formData, actor, db) {
         metadata: { form: spec.unitType },
     }, {
         text: `UPDATE fcr_core.${spec.table}
-                SET ${setClause}, updated_at = NOW()
-              WHERE id = $${keys.length + 1} AND deleted_at IS NULL AND updated_at = $${keys.length + 2}::timestamptz`,
-        params: [...keys.map((k) => cols[k]), id, guard],
+                SET ${setClause},
+                    dispatch_dirty_cols = ARRAY(SELECT DISTINCT unnest(COALESCE(dispatch_dirty_cols, '{}'::text[]) || $${keys.length + 1}::text[])),
+                    updated_at = NOW()
+              WHERE id = $${keys.length + 2} AND deleted_at IS NULL AND updated_at = $${keys.length + 3}::timestamptz`,
+        params: [...keys.map((k) => cols[k]), dirtyCols, id, guard],
     });
     const res = await db.query(text, params);
     // Real neon/pg pools return rowCount; fall back to rows.length for a bare Queryable.
