@@ -1,6 +1,7 @@
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 export declare const TRAILER_NUMERIC_COLS: Set<string>;
 export declare const TRAILER_DATE_COLS: Set<string>;
+export declare const TRAILER_BOOL_COLS: Set<string>;
 export declare const TRAILER_FORM_FIELDS: FormField[];
 export declare function applyTrailerStatusEngine(before: Record<string, unknown>, edits: Record<string, unknown>, opts?: {
     isNew?: boolean;

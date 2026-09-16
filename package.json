@@ -1,6 +1,6 @@
 {
   "name": "@fcr/core",
-  "version": "0.13.2",
+  "version": "0.14.0",
   "description": "Shared FCR platform code — RBAC engine + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",

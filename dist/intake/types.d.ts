@@ -50,6 +50,9 @@ export interface IntakeSpec {
     formFields: FormField[];
     numericCols: Set<string>;
     dateCols: Set<string>;
+    /** Boolean columns edited via a Yes/No select — coerced to real true/false/null. Optional
+     *  (only trailer has one today: `rework`); an absent set means no boolean coercion. */
+    boolCols?: Set<string>;
     /** Extra bookkeeping columns kept out of the audit diff (id/created_by/... are always excluded). */
     diffExclude?: Set<string>;
     /** Soft-FK reference columns to existence-check against fcr_core.<table> by sf_id. */

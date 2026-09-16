@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { createUnit, findDuplicates } from "./pipeline.js";
-import { applyTrailerStatusEngine, validateTrailer, trailerSpec } from "./specs/trailer.js";
+import { coerceField, parseEdits } from "./coerce.js";
+import {
+  applyTrailerStatusEngine,
+  validateTrailer,
+  trailerSpec,
+  TRAILER_NUMERIC_COLS,
+  TRAILER_DATE_COLS,
+  TRAILER_BOOL_COLS,
+} from "./specs/trailer.js";
 import { applyTruckStatusEngine, validateTruck, truckSpec } from "./specs/truck.js";
 import type { Queryable } from "../rbac/index.js";
 
@@ -192,5 +200,81 @@ describe("createUnit", () => {
       expect(res.errors.map((e) => e.field)).toContain("fcr_collision_customer");
     }
     expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
+  });
+});
+
+// ── SF-parity fields now editable (fcr-trailers epic #4, slice 3 Piece B) ──────────
+// The 8 fields fcr_core gained in fcr-dispatch#88 (Piece A rendered them read-only) are now in
+// the editable form set + coerced/synced like the rest of the trailer app.
+describe("trailer SF-parity fields — editable (Piece B)", () => {
+  const EIGHT = [
+    "parts_notes", "invoice_2", "invoicing_contact", "invoice_notes",
+    "rework", "rework_date", "rework_start_date", "rework_end_date",
+  ];
+
+  it("all 8 are in the editable form spec, in their SF page-layout sections", () => {
+    const bySection = new Map(trailerSpec.formFields.map((f) => [f.column, f.section]));
+    for (const c of EIGHT) expect(bySection.has(c)).toBe(true);
+    expect(bySection.get("parts_notes")).toBe("parts");
+    expect(bySection.get("invoice_2")).toBe("invoice");
+    expect(bySection.get("invoicing_contact")).toBe("invoice");
+    expect(bySection.get("invoice_notes")).toBe("invoice");
+    for (const c of ["rework", "rework_date", "rework_start_date", "rework_end_date"]) {
+      expect(bySection.get(c)).toBe("rework");
+    }
+  });
+
+  it("rework is a real boolean: Yes→true, No→false, blank→null (not the string 'Yes')", () => {
+    const c = (raw: string) => coerceField("rework", raw, TRAILER_NUMERIC_COLS, TRAILER_DATE_COLS, TRAILER_BOOL_COLS);
+    expect(c("Yes")).toBe(true);
+    expect(c("No")).toBe(false);
+    expect(c("")).toBe(null);
+    expect(c("true")).toBe(true);
+    // Guard the whole point of boolCols: without it, "Yes" would bind as text into a boolean column.
+    expect(coerceField("rework", "Yes", TRAILER_NUMERIC_COLS, TRAILER_DATE_COLS)).toBe("Yes");
+  });
+
+  it("parseEdits coerces the 8 per type (rework→bool, rework dates→date, notes→text)", () => {
+    const edits = parseEdits(
+      form({
+        rework: "Yes",
+        rework_date: "2026-09-10",
+        rework_start_date: "2026-09-11",
+        rework_end_date: "2026-09-12",
+        invoice_2: "INV-2",
+        invoicing_contact: "Jane Doe",
+        invoice_notes: "swap billing",
+        parts_notes: "waiting on axle",
+      }),
+      trailerSpec.formFields,
+      trailerSpec.numericCols,
+      trailerSpec.dateCols,
+      trailerSpec.boolCols,
+    );
+    expect(edits.rework).toBe(true);
+    expect(edits.rework_date).toBe("2026-09-10");
+    expect(edits.rework_start_date).toBe("2026-09-11");
+    expect(edits.invoice_2).toBe("INV-2");
+    expect(edits.invoicing_contact).toBe("Jane Doe");
+    expect(edits.parts_notes).toBe("waiting on axle");
+  });
+
+  it("engine stamps Invoice Date when Invoice #2 is first entered (SF keys off both invoices)", () => {
+    // invoice_1 already set (so its clause can't be what fires); invoice_2 newly entered.
+    const r = applyTrailerStatusEngine(
+      { status: "Approved", invoice_1: "INV-1" },
+      { invoice_2: "INV-2" },
+      { today: TODAY },
+    );
+    expect(r.derived.invoice_date).toBe(TODAY);
+  });
+
+  it("engine does NOT re-stamp Invoice Date when one already exists", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Approved", invoice_date: "2026-01-01" },
+      { invoice_2: "INV-2" },
+      { today: TODAY },
+    );
+    expect(r.derived.invoice_date).toBeUndefined();
   });
 });

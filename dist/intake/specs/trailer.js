@@ -30,8 +30,11 @@ export const TRAILER_DATE_COLS = new Set([
     "estimate_finalized", "parts_eta_date_stamped", "all_parts_received_date_stamped",
     "repair_start_date", "repair_goal", "repair_completion_date",
     "delivery_eta", "delivery_dispatch_date", "delivery_date", "invoice_date", "invoice_paid_date",
-    "status_date",
+    "status_date", "rework_date", "rework_start_date", "rework_end_date",
 ]);
+// Boolean columns edited via a Yes/No select (the DB column is a real boolean, not text). Only
+// `rework` today; coerced to true/false/null so the value binds correctly to the boolean column.
+export const TRAILER_BOOL_COLS = new Set(["rework"]);
 export const TRAILER_FORM_FIELDS = [
     // Information
     { column: "sf_name", label: "Unit #", section: "information", input: "text" },
@@ -70,6 +73,7 @@ export const TRAILER_FORM_FIELDS = [
     { column: "parts_available", label: "Parts Available", section: "parts", input: "select", options: ["", ...YES_NO] },
     { column: "parts_eta_date_stamped", label: "Parts ETA", section: "parts", input: "date" },
     { column: "all_parts_received_date_stamped", label: "All Parts Received", section: "parts", input: "date" },
+    { column: "parts_notes", label: "Parts Notes", section: "parts", input: "textarea" },
     // Repair
     { column: "repair_start_date", label: "Repair Start", section: "repair", input: "date" },
     { column: "repair_goal", label: "Repair Goal", section: "repair", input: "date" },
@@ -92,10 +96,17 @@ export const TRAILER_FORM_FIELDS = [
     { column: "swap_info_delivery", label: "Swap Info (Delivery)", section: "outgoing_transport", input: "textarea" },
     // Invoice
     { column: "invoice_1", label: "Invoice #", section: "invoice", input: "text" },
+    { column: "invoice_2", label: "Invoice #2", section: "invoice", input: "text" },
+    { column: "invoicing_contact", label: "Invoicing Contact", section: "invoice", input: "text" },
     { column: "invoice_date", label: "Invoice Date", section: "invoice", input: "date" },
     { column: "invoice_paid_date", label: "Invoice Paid", section: "invoice", input: "date" },
     { column: "po", label: "PO", section: "invoice", input: "text" },
+    { column: "invoice_notes", label: "Invoice Notes", section: "invoice", input: "textarea" },
     // Rework
+    { column: "rework", label: "Rework", section: "rework", input: "select", options: ["", ...YES_NO] },
+    { column: "rework_date", label: "Rework Date", section: "rework", input: "date" },
+    { column: "rework_start_date", label: "Rework Start", section: "rework", input: "date" },
+    { column: "rework_end_date", label: "Rework End", section: "rework", input: "date" },
     { column: "rework_notes", label: "Rework Notes", section: "rework", input: "textarea" },
 ];
 // ── Status engine (SF flow FCR_Collision_Trailers) ────────────────────────────────
@@ -190,7 +201,10 @@ export function applyTrailerStatusEngine(before, edits, opts = {}) {
     if (effStatus === "Approved" && eff("parts_available") === "No") {
         setStatus("Awaiting Parts", derived.status_date ?? todayStr);
     }
-    const invoiceEntered = !isBlank(edits.invoice_1) && isBlank(before.invoice_1);
+    // Invoice entered → stamp Invoice Date if blank (SF stamps it; no status change). SF keys off
+    // BOTH Invoice_1 and Invoice_2, so a first-time entry of either stamps the date.
+    const invoiceEntered = (!isBlank(edits.invoice_1) && isBlank(before.invoice_1)) ||
+        (!isBlank(edits.invoice_2) && isBlank(before.invoice_2));
     if (invoiceEntered && isBlank(eff("invoice_date")))
         derived.invoice_date = todayStr;
     if (!isBlank(edits.estimate_finalized) && isBlank(before.estimate_finalized)) {
@@ -204,6 +218,11 @@ function applyCompletionAndRework(derived, edits, eff, before) {
     const effStatus = derived.status ?? before.status;
     if (effStatus === "Repair Complete")
         derived.completetion_percentage = 100;
+    // Rework: picking status REWORK advances status + appends " - REWORK" to the name (SF flow D).
+    // The rework boolean + rework_date/_start/_end are now DIRECTLY EDITABLE fields (form), not
+    // engine-derived. Whether ticking the rework checkbox should also auto-advance status→REWORK (or
+    // vice-versa) is an open SF-fidelity question for Matt (SCOPE §924) — deliberately NOT invented
+    // here; the two are independent until that's answered.
     const reworkPicked = edits.status === "REWORK" && before.status !== "REWORK";
     if (reworkPicked) {
         derived.status = "REWORK";
@@ -255,6 +274,7 @@ export const trailerSpec = {
     formFields: TRAILER_FORM_FIELDS,
     numericCols: TRAILER_NUMERIC_COLS,
     dateCols: TRAILER_DATE_COLS,
+    boolCols: TRAILER_BOOL_COLS,
     references: [
         { column: "fcr_collision_account", table: "customer", label: "FCR Collision Account" },
         { column: "fcr_collision_contact", table: "unit_contact", label: "FCR Collision Contact" },
