@@ -334,4 +334,41 @@ describe("trailer rework coupling — checkbox ↔ REWORK status", () => {
     );
     expect(r.derived.rework).toBeUndefined();
   });
+
+  // Regression (review #18): rework turn-on is TERMINAL — the Awaiting-Customer-Pickup remap must
+  // not clobber status back off REWORK while rework stays true.
+  it("ticking rework wins over the Awaiting-Customer-Pickup remap (status stays REWORK)", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "Awaiting Delivery", delivery_driver: "CUSTOMER PICKUP", rework: false, sf_name: "T-300" },
+      { rework: true },
+      { today: TODAY },
+    );
+    expect(r.derived.status).toBe("REWORK");
+    expect(r.derived.rework).toBe(true);
+  });
+
+  // Regression (review #18): re-ticking rework on a unit already in REWORK must not re-stamp
+  // status_date or report a phantom status change.
+  it("no status_date churn when already in REWORK", () => {
+    const r = applyTrailerStatusEngine(
+      { status: "REWORK", rework: false },
+      { rework: true },
+      { today: TODAY },
+    );
+    expect(r.derived.rework).toBe(true); // the checkbox value is still applied
+    expect(r.derived.status).toBeUndefined(); // no phantom status change
+    expect(r.derived.status_date).toBeUndefined(); // not re-stamped
+    expect(r.statusChanged).toBe(false);
+  });
+
+  // Regression (review #18): a brand-new unit can't be in rework — the checkbox trigger is edit-only.
+  it("create-with-rework does NOT flip the intake status to REWORK", () => {
+    const r = applyTrailerStatusEngine(
+      {},
+      { pickup_driver: "CUSTOMER DROP OFF", rework: true },
+      { isNew: true, today: TODAY },
+    );
+    expect(r.derived.status).toBe("Received"); // the intake status, not REWORK
+    expect(r.derived.rework).toBeUndefined(); // engine doesn't auto-force it on create
+  });
 });
