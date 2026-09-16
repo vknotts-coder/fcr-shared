@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createUnit, findDuplicates } from "./pipeline.js";
+import { createUnit, updateUnit, findDuplicates } from "./pipeline.js";
 import { coerceField, parseEdits } from "./coerce.js";
 import {
   applyTrailerStatusEngine,
@@ -370,6 +370,39 @@ describe("trailer rework coupling — checkbox ↔ REWORK status", () => {
     );
     expect(r.derived.status).toBe("Received"); // the intake status, not REWORK
     expect(r.derived.rework).toBeUndefined(); // engine doesn't auto-force it on create
+  });
+});
+
+// ── Field-scoped reverse-sync: updateUnit records changed cols into dispatch_dirty_cols (§2.0) ──
+describe("updateUnit — dispatch_dirty_cols (field-scoped reverse-sync)", () => {
+  it("unions the changed business columns into dispatch_dirty_cols on the UPDATE", async () => {
+    const ID = "11111111-1111-1111-1111-111111111111";
+    const { db, calls } = fakeDb((text) => {
+      if (text.includes("__guard")) {
+        // before-image SELECT
+        return { rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Received", sf_name: "T-1", status_notes: "old" }] };
+      }
+      return { rows: [], rowCount: 1 }; // the UPDATE
+    });
+    const res = await updateUnit(trailerSpec, ID, form({ status_notes: "new note" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(true);
+
+    const upd = calls.find((c) => c.text.includes("UPDATE fcr_core.trailer"));
+    expect(upd).toBeTruthy();
+    expect(upd!.text).toContain("dispatch_dirty_cols = ARRAY(SELECT DISTINCT unnest");
+    // the changed column is bound as a text[] param
+    const arrayParam = upd!.params.find((p) => Array.isArray(p)) as string[] | undefined;
+    expect(arrayParam).toContain("status_notes");
+  });
+
+  it("a no-op edit writes nothing (no UPDATE, no dirty-col stamp)", async () => {
+    const ID = "22222222-2222-2222-2222-222222222222";
+    const { db, calls } = fakeDb(() => ({
+      rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Received", sf_name: "T-1", status_notes: "same" }],
+    }));
+    const res = await updateUnit(trailerSpec, ID, form({ status_notes: "same" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(true);
+    expect(calls.some((c) => c.text.includes("UPDATE fcr_core.trailer"))).toBe(false);
   });
 });
 
