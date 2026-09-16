@@ -92,7 +92,7 @@ export async function findDuplicates(spec, cols, db) {
  * hit short-circuits with `{ ok:false, duplicates }` so the UI can offer "create anyway".
  */
 export async function createUnit(spec, formData, actor, db, opts = {}) {
-    const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols);
+    const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
     const before = {};
     const { derived, emails } = spec.engine(before, edits, { isNew: true });
     const cols = { ...edits, ...derived };
@@ -140,7 +140,7 @@ export async function createUnit(spec, formData, actor, db, opts = {}) {
 export async function updateUnit(spec, id, formData, actor, db) {
     if (!isUuid(id))
         return { ok: false, errors: [{ field: null, message: `Invalid ${spec.unitType} id.` }] };
-    const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols);
+    const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
     const editableColumns = spec.formFields.map((f) => f.column);
     // Before-image includes status_date (engine-written, not an editable field) so the audit diff
     // compares against the true prior date, plus updated_at::text as the exact-precision optimistic

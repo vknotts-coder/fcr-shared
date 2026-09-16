@@ -128,7 +128,7 @@ export async function createUnit(
   db: Queryable,
   opts: { confirmDuplicate?: boolean } = {},
 ): Promise<SaveResult> {
-  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols);
+  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
   const before: Record<string, unknown> = {};
 
   const { derived, emails } = spec.engine(before, edits, { isNew: true });
@@ -192,7 +192,7 @@ export async function updateUnit(
 ): Promise<SaveResult> {
   if (!isUuid(id)) return { ok: false, errors: [{ field: null, message: `Invalid ${spec.unitType} id.` }] };
 
-  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols);
+  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
   const editableColumns = spec.formFields.map((f) => f.column);
 
   // Before-image includes status_date (engine-written, not an editable field) so the audit diff
