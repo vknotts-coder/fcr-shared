@@ -13,6 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { commitWithEvent, eventInsert, diffChanges } from "../events/index.js";
 import { parseEdits } from "./coerce.js";
+import { resolveCustomerRef, resolveContactRef } from "./customer.js";
 // Bookkeeping / identity columns written but NOT business facts — kept out of the audit diff
 // so a re-save (or the create INSERT's own id) emits no phantom field change.
 const BASE_DIFF_EXCLUDE = ["id", "updated_by", "local_edit_at", "created_by", "created_by_name"];
@@ -36,11 +37,16 @@ async function checkReferences(spec, edits, before, db) {
     for (const ref of spec.references ?? []) {
         const val = edits[ref.column];
         if (typeof val === "string" && val && val !== before[ref.column]) {
+            // A ref column holds EITHER an existing row's sf_id OR a just-created row's local UUID (the
+            // inline-customer/contact convention — see customer.ts). Resolve a UUID against `id`, an sf_id
+            // against `sf_id`, so a customer/contact created in the same intake flow validates rather than
+            // failing "not found" because its sf_id is still NULL pending reverse-sync.
+            const keyCol = isUuid(val) ? "id" : "sf_id";
             checks.push(db
                 // `deleted_at IS NULL` matches the dedupe + update reads (sf_id survives a soft delete),
                 // so a soft-deleted account/contact resolves as not-found rather than a dangling soft-FK
                 // that reverse-sync would push to the real SF org.
-                .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE sf_id = $1 AND deleted_at IS NULL LIMIT 1`, [val])
+                .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE ${keyCol} = $1 AND deleted_at IS NULL LIMIT 1`, [val])
                 .then((r) => r.rows.length === 0
                 ? { field: ref.column, message: `${ref.label} "${val}" was not found — pick a valid ${ref.label}.` }
                 : null));
@@ -131,6 +137,37 @@ export async function createUnit(spec, formData, actor, db, opts = {}) {
         params: keys.map((k) => cols[k]),
     }, db);
     return { ok: true, id, emails };
+}
+/**
+ * Create MANY units for ONE customer in a single intake (the "one customer, multiple units at
+ * once" flow). Resolves the customer + contact ONCE — picking existing rows or creating them
+ * inline (resolveCustomerRef/resolveContactRef) — then injects that shared ref into each unit's
+ * FormData and calls `createUnit` per unit, so the whole batch hangs off the same audited create
+ * path (dedupe + validation + event) as a single create.
+ *
+ * v1 semantics (documented, matches the fcr-sales flow this is lifted from): SEQUENTIAL and
+ * NOT wrapped in one transaction — the customer/contact are created first, then each unit; a
+ * unit that fails validation/dedupe is reported in its `units[]` entry while the others proceed,
+ * so partial success is possible. The caller inspects the per-unit results and can re-submit the
+ * failed ones with `confirmDuplicate` (the customer/contact are already created — pass them as
+ * `existingSfId`/`existingRef` on the retry so they aren't duplicated). Full batch atomicity +
+ * a single pre-create dedupe pass are a hardening follow-up (needs a transaction-scoped Queryable).
+ *
+ * Caller must validate inputs first (≥1 unit; a new customer/contact has a non-empty name),
+ * exactly as the app server action does today before writing.
+ */
+export async function createUnits(spec, customer, contact, units, actor, db, opts = {}) {
+    const customerRef = await resolveCustomerRef(customer, actor, db);
+    const contactRef = await resolveContactRef(contact, customerRef, actor, db);
+    const results = [];
+    for (const [i, fd] of units.entries()) {
+        // Every unit in the batch shares the one resolved customer/contact — inject the refs so the
+        // caller doesn't repeat them per unit (and can't drift them across the batch).
+        fd.set(spec.customerRefColumn, customerRef);
+        fd.set(spec.contactRefColumn, contactRef);
+        results.push({ index: i, result: await createUnit(spec, fd, actor, db, opts) });
+    }
+    return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
 }
 /**
  * Edit an existing unit. Reads the before-image, runs the engine + validation over the

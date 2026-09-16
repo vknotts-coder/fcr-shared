@@ -48,6 +48,47 @@ export interface Actor {
   name: string;
 }
 
+/** A new customer to create inline (the fields fcr-sales collects). Only `sfName` is required;
+ *  the created row's Salesforce id is NULL until reverse-sync pushes it — see resolveCustomerRef. */
+export interface NewCustomerInput {
+  sfName: string;
+  businessPhone?: string | null;
+  billingStreet?: string | null;
+  billingCity?: string | null;
+  billingState?: string | null;
+  billingZip?: string | null;
+}
+
+/** A new contact to create inline, linked to the resolved customer ref (sf_id or local UUID). */
+export interface NewContactInput {
+  sfName: string;
+  phone?: string | null;
+  email?: string | null;
+  role?: string | null;
+}
+
+/** Pick an existing customer (by its Salesforce id) OR create a new one inline. */
+export type CustomerInput = { existingSfId: string } | { newCustomer: NewCustomerInput };
+
+/** Pick an existing contact (by ref — its sf_id or local UUID) OR create a new one inline. */
+export type ContactInput = { existingRef: string } | { newContact: NewContactInput };
+
+/** Result of a create-multiple batch: the resolved customer/contact refs plus one entry per unit,
+ *  in submit order. A unit entry is either a created id or the failure (validation errors / dedupe
+ *  hits) from createUnit. Partial success is possible in v1 (sequential, non-atomic — matches the
+ *  fcr-sales flow this is lifted from); the customer/contact are resolved once and shared. */
+export interface BatchUnitResult {
+  index: number;
+  result: SaveResult;
+}
+export interface CreateUnitsResult {
+  customerRef: string;
+  contactRef: string;
+  units: BatchUnitResult[];
+  /** True iff every unit was created. */
+  ok: boolean;
+}
+
 /**
  * A unit-type intake spec. The trailer spec is lifted from fcr-trailers verbatim; the truck
  * spec is create + a simple pickup seed-status (the full truck SF flow is a deferred slice —
@@ -72,6 +113,13 @@ export interface IntakeSpec {
   vinColumn: string;
   /** Unit-number/name column ("sf_name") — used by the dedupe guard. */
   nameColumn: string;
+  /** The unit's customer/account ref column (truck: "fcr_collision_customer", trailer:
+   *  "fcr_collision_account"). The create-multiple batch injects the resolved customer ref here.
+   *  Holds either an existing customer's sf_id OR a just-created customer's local UUID. */
+  customerRefColumn: string;
+  /** The unit's contact ref column (truck: "fcr_collision_contacts", trailer:
+   *  "fcr_collision_contact"). The batch injects the resolved contact ref here (sf_id or UUID). */
+  contactRefColumn: string;
   /** Pure status engine: (before, edits, opts) → derived fields to merge into the write. */
   engine: (
     before: Record<string, unknown>,
