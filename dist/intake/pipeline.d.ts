@@ -9,32 +9,9 @@ import type { Actor, ContactInput, CreateUnitsResult, CustomerInput, DuplicateHi
  * the single create chokepoint is how the fleet stays dedupe'd.
  */
 export declare function findDuplicates(spec: IntakeSpec, cols: Record<string, unknown>, db: Queryable): Promise<DuplicateHit[]>;
-/**
- * Create a new unit. Generates the fcr_core uuid (sf_id stays null until dispatch's reverse
- * sync creates the SF record and backfills it). Unless `confirmDuplicate` is set, a dedupe
- * hit short-circuits with `{ ok:false, duplicates }` so the UI can offer "create anyway".
- */
 export declare function createUnit(spec: IntakeSpec, formData: FormData, actor: Actor, db: Queryable, opts?: {
     confirmDuplicate?: boolean;
 }): Promise<SaveResult>;
-/**
- * Create MANY units for ONE customer in a single intake (the "one customer, multiple units at
- * once" flow). Resolves the customer + contact ONCE — picking existing rows or creating them
- * inline (resolveCustomerRef/resolveContactRef) — then injects that shared ref into each unit's
- * FormData and calls `createUnit` per unit, so the whole batch hangs off the same audited create
- * path (dedupe + validation + event) as a single create.
- *
- * v1 semantics (documented, matches the fcr-sales flow this is lifted from): SEQUENTIAL and
- * NOT wrapped in one transaction — the customer/contact are created first, then each unit; a
- * unit that fails validation/dedupe is reported in its `units[]` entry while the others proceed,
- * so partial success is possible. The caller inspects the per-unit results and can re-submit the
- * failed ones with `confirmDuplicate` (the customer/contact are already created — pass them as
- * `existingSfId`/`existingRef` on the retry so they aren't duplicated). Full batch atomicity +
- * a single pre-create dedupe pass are a hardening follow-up (needs a transaction-scoped Queryable).
- *
- * Caller must validate inputs first (≥1 unit; a new customer/contact has a non-empty name),
- * exactly as the app server action does today before writing.
- */
 export declare function createUnits(spec: IntakeSpec, customer: CustomerInput, contact: ContactInput, units: FormData[], actor: Actor, db: Queryable, opts?: {
     confirmDuplicate?: boolean;
 }): Promise<CreateUnitsResult>;

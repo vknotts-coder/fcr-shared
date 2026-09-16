@@ -11,12 +11,9 @@
 // match. This is the exact mechanism fcr-sales already runs in prod.
 import { randomUUID } from "node:crypto";
 import { commitWithEvent, diffChanges } from "../events/index.js";
-const nn = (v) => {
-    if (typeof v !== "string")
-        return v ?? null;
-    const t = v.trim();
-    return t.length ? t : null;
-};
+import { isBlank } from "./coerce.js";
+// Trim to a stored value or null — reuses coerce.ts's isBlank so blank semantics can't drift.
+const nn = (v) => (isBlank(v) ? null : v.trim());
 /**
  * Resolve the customer for an intake: return an existing customer's Salesforce id unchanged, or
  * create a new fcr_core.customer row (audited) and return its LOCAL UUID (reverse-sync resolves it

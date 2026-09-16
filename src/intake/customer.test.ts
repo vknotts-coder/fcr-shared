@@ -159,8 +159,40 @@ describe("createUnits — create-multiple for one customer", () => {
     const second = res.units[1]!.result;
     expect(second.ok).toBe(false);
     if (!second.ok && "duplicates" in second) expect(second.duplicates[0]!.sfName).toBe("OLD");
-    // unit 1 was still created, and so were the customer + contact (documented v1 non-atomic behavior)
+    // unit 1 was still created, and so were the customer + contact (≥1 unit was writable)
     expect(calls.filter((c) => c.text.includes("INSERT INTO fcr_core.trailer"))).toHaveLength(1);
     expect(calls.filter((c) => c.text.includes("INSERT INTO fcr_core.customer"))).toHaveLength(1);
+  });
+
+  it("orphan-safe: if EVERY unit fails the dry run, NO customer/contact/unit is written", async () => {
+    const DUP_VIN = "1HGCM82633A00000";
+    const { db, calls } = fakeDb((text, params) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
+      if (text.includes("LIMIT 5") && params[0] === DUP_VIN) return { rows: [{ id: "99999999-9999-9999-9999-999999999999", sf_name: "OLD" }] };
+      return { rows: [], rowCount: 1 };
+    });
+    const res = await createUnits(
+      trailerSpec,
+      { newCustomer: { sfName: "Acme" } },
+      { newContact: { sfName: "Jane" } },
+      [form({ sf_name: "T-1", full_vin: DUP_VIN }), form({ sf_name: "T-2", full_vin: DUP_VIN })],
+      actor,
+      db, // no confirmDuplicate → both units are duplicates → none writable
+    );
+    expect(res.ok).toBe(false);
+    expect(res.customerRef).toBe(""); // never resolved
+    expect(res.contactRef).toBe("");
+    // The whole point: an all-failing batch writes NOTHING — no orphan customer/contact for reverse-sync.
+    expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
+    expect(res.units).toHaveLength(2);
+    for (const u of res.units) expect(u.result.ok).toBe(false);
+  });
+
+  it("empty units[] → no writes, ok:false (never orphans a customer/contact)", async () => {
+    const { db, calls } = fakeDb(allFound);
+    const res = await createUnits(trailerSpec, { newCustomer: { sfName: "Acme" } }, { newContact: { sfName: "Jane" } }, [], actor, db);
+    expect(res.ok).toBe(false);
+    expect(res.units).toEqual([]);
+    expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
   });
 });

@@ -12,14 +12,12 @@
 
 import { randomUUID } from "node:crypto";
 import { commitWithEvent, diffChanges } from "../events/index.js";
+import { isBlank } from "./coerce.js";
 import type { Queryable } from "../rbac/index.js";
 import type { Actor, CustomerInput, ContactInput } from "./types.js";
 
-const nn = (v: string | null | undefined): string | null => {
-  if (typeof v !== "string") return v ?? null;
-  const t = v.trim();
-  return t.length ? t : null;
-};
+// Trim to a stored value or null — reuses coerce.ts's isBlank so blank semantics can't drift.
+const nn = (v: string | null | undefined): string | null => (isBlank(v) ? null : (v as string).trim());
 
 /**
  * Resolve the customer for an intake: return an existing customer's Salesforce id unchanged, or
