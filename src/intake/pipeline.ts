@@ -15,7 +15,8 @@ import { randomUUID } from "node:crypto";
 import { commitWithEvent, eventInsert, diffChanges } from "../events/index.js";
 import type { Queryable } from "../rbac/index.js";
 import { parseEdits } from "./coerce.js";
-import type { Actor, DuplicateHit, IntakeSpec, SaveResult, ValidationError } from "./types.js";
+import { resolveCustomerRef, resolveContactRef } from "./customer.js";
+import type { Actor, ContactInput, CreateUnitsResult, CustomerInput, DuplicateHit, IntakeSpec, BatchUnitResult, SaveResult, ValidationError } from "./types.js";
 
 // Bookkeeping / identity columns written but NOT business facts — kept out of the audit diff
 // so a re-save (or the create INSERT's own id) emits no phantom field change.
@@ -44,17 +45,24 @@ async function checkReferences(
   edits: Record<string, unknown>,
   before: Record<string, unknown>,
   db: Queryable,
+  skipColumns?: Set<string>,
 ): Promise<ValidationError[]> {
   const checks: Promise<ValidationError | null>[] = [];
   for (const ref of spec.references ?? []) {
+    if (skipColumns?.has(ref.column)) continue; // batch dry-run skips a not-yet-created customer/contact ref
     const val = edits[ref.column];
     if (typeof val === "string" && val && val !== before[ref.column]) {
+      // A ref column holds EITHER an existing row's sf_id OR a just-created row's local UUID (the
+      // inline-customer/contact convention — see customer.ts). Resolve a UUID against `id`, an sf_id
+      // against `sf_id`, so a customer/contact created in the same intake flow validates rather than
+      // failing "not found" because its sf_id is still NULL pending reverse-sync.
+      const keyCol = isUuid(val) ? "id" : "sf_id";
       checks.push(
         db
           // `deleted_at IS NULL` matches the dedupe + update reads (sf_id survives a soft delete),
           // so a soft-deleted account/contact resolves as not-found rather than a dangling soft-FK
           // that reverse-sync would push to the real SF org.
-          .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE sf_id = $1 AND deleted_at IS NULL LIMIT 1`, [val])
+          .query(`SELECT 1 FROM fcr_core.${ref.table} WHERE ${keyCol} = $1 AND deleted_at IS NULL LIMIT 1`, [val])
           .then((r) =>
             r.rows.length === 0
               ? { field: ref.column, message: `${ref.label} "${val}" was not found — pick a valid ${ref.label}.` }
@@ -121,6 +129,34 @@ export async function findDuplicates(
  * sync creates the SF record and backfills it). Unless `confirmDuplicate` is set, a dedupe
  * hit short-circuits with `{ ok:false, duplicates }` so the UI can offer "create anyway".
  */
+/** The validate-and-dedupe front half of a create, WITHOUT writing — parse → engine → validate →
+ *  reference-check → dedupe. Returns the effective columns to insert, or the failure. Shared by
+ *  createUnit (which then inserts) and createUnits' dry-run gate (which uses it to decide whether a
+ *  unit is writable BEFORE creating the customer/contact, so an all-failing batch can't orphan them).
+ *  `skipRefColumns` omits a soft-FK existence check for a ref that will only exist after this call
+ *  (a customer/contact being created in the same batch). */
+async function prepareCreate(
+  spec: IntakeSpec,
+  formData: FormData,
+  db: Queryable,
+  opts: { confirmDuplicate?: boolean; skipRefColumns?: Set<string> } = {},
+): Promise<{ ok: true; cols: Record<string, unknown>; emails: string[] } | { ok: false; errors: ValidationError[] } | { ok: false; duplicates: DuplicateHit[] }> {
+  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
+  const before: Record<string, unknown> = {};
+
+  const { derived, emails } = spec.engine(before, edits, { isNew: true });
+  const cols: Record<string, unknown> = { ...edits, ...derived };
+
+  const errors = [...spec.validate(cols, { isNew: true }), ...(await checkReferences(spec, edits, before, db, opts.skipRefColumns))];
+  if (errors.length) return { ok: false, errors };
+
+  if (!opts.confirmDuplicate) {
+    const duplicates = await findDuplicates(spec, cols, db);
+    if (duplicates.length) return { ok: false, duplicates };
+  }
+  return { ok: true, cols, emails };
+}
+
 export async function createUnit(
   spec: IntakeSpec,
   formData: FormData,
@@ -128,19 +164,9 @@ export async function createUnit(
   db: Queryable,
   opts: { confirmDuplicate?: boolean } = {},
 ): Promise<SaveResult> {
-  const edits = parseEdits(formData, spec.formFields, spec.numericCols, spec.dateCols, spec.boolCols);
-  const before: Record<string, unknown> = {};
-
-  const { derived, emails } = spec.engine(before, edits, { isNew: true });
-  const cols: Record<string, unknown> = { ...edits, ...derived };
-
-  const errors = [...spec.validate(cols, { isNew: true }), ...(await checkReferences(spec, edits, before, db))];
-  if (errors.length) return { ok: false, errors };
-
-  if (!opts.confirmDuplicate) {
-    const duplicates = await findDuplicates(spec, cols, db);
-    if (duplicates.length) return { ok: false, duplicates };
-  }
+  const prep = await prepareCreate(spec, formData, db, opts);
+  if (!prep.ok) return prep;
+  const { cols, emails } = prep;
 
   const id = randomUUID();
   cols.id = id;
@@ -149,7 +175,8 @@ export async function createUnit(
   cols.updated_by = actor.name;
   cols.local_edit_at = new Date();
 
-  const changes = diffChanges(before, cols, {
+  // before-image is empty on create; the audit diff is the full new row minus bookkeeping.
+  const changes = diffChanges({}, cols, {
     numericCols: spec.numericCols,
     dateCols: spec.dateCols,
     exclude: diffExcludeFor(spec),
@@ -176,6 +203,94 @@ export async function createUnit(
   );
 
   return { ok: true, id, emails };
+}
+
+/**
+ * Create MANY units for ONE customer in a single intake (the "one customer, multiple units at
+ * once" flow). Resolves the customer + contact ONCE — picking existing rows or creating them
+ * inline (resolveCustomerRef/resolveContactRef) — then injects that shared ref into each unit's
+ * FormData and calls `createUnit` per unit, so the whole batch hangs off the same audited create
+ * path (dedupe + validation + event) as a single create.
+ *
+ * ORPHAN-SAFE (review #20): the customer/contact are created ONLY after a dry-run proves at least
+ * one unit is actually writable — so an all-failing batch (every unit a dup or invalid) can't leave
+ * a customer/contact with sf_id NULL and zero units, which reverse-sync would push to the real SF
+ * org as a junk unit-less record. The dry run parses/validates/dedupes each unit WITHOUT writing;
+ * a new customer/contact ref doesn't exist yet, so its soft-FK existence check is skipped for the
+ * dry run (a placeholder satisfies the required-field validation) and enforced for real by the
+ * per-unit createUnit once the ref is created.
+ *
+ * v1 is still SEQUENTIAL and non-transactional once past the gate: units are created one by one and
+ * a unit that fails is reported in its `units[]` entry while the writable ones proceed (partial
+ * success). Full batch atomicity is a follow-up (needs a transaction-scoped Queryable). Retry a
+ * failed unit with `confirmDuplicate` and the now-existing customer as `existingSfId`/`existingRef`.
+ *
+ * Caller still validates a new customer/contact has a non-empty name, as the app action does today.
+ */
+// A non-blank stand-in for a not-yet-created customer/contact ref during the dry run — it satisfies
+// the spec's "account/contact required" validation while its existence check is skipped.
+const DRYRUN_REF = "__dryrun_pending__";
+
+export async function createUnits(
+  spec: IntakeSpec,
+  customer: CustomerInput,
+  contact: ContactInput,
+  units: FormData[],
+  actor: Actor,
+  db: Queryable,
+  opts: { confirmDuplicate?: boolean } = {},
+): Promise<CreateUnitsResult> {
+  // Empty batch → nothing to create; never resolve (and so never orphan) a customer/contact.
+  if (units.length === 0) return { customerRef: "", contactRef: "", units: [], ok: false };
+
+  // Dry-run gate. For a new customer/contact the ref doesn't exist yet — inject a placeholder and
+  // skip its existence check; an existing ref is real and checked normally.
+  const custIsNew = "newCustomer" in customer;
+  const contactIsNew = "newContact" in contact;
+  const skipRefColumns = new Set<string>();
+  if (custIsNew) skipRefColumns.add(spec.customerRefColumn);
+  if (contactIsNew) skipRefColumns.add(spec.contactRefColumn);
+  const dryCustomerRef = custIsNew ? DRYRUN_REF : customer.existingSfId;
+  const dryContactRef = contactIsNew ? DRYRUN_REF : contact.existingRef;
+
+  // Per unit: null = writable (create it for real below); a failure SaveResult = keep as-is.
+  const dry: (SaveResult | null)[] = [];
+  let anyWritable = false;
+  for (const fd of units) {
+    fd.set(spec.customerRefColumn, dryCustomerRef);
+    fd.set(spec.contactRefColumn, dryContactRef);
+    const prep = await prepareCreate(spec, fd, db, { confirmDuplicate: opts.confirmDuplicate, skipRefColumns });
+    if (prep.ok) {
+      anyWritable = true;
+      dry.push(null);
+    } else {
+      dry.push(prep);
+    }
+  }
+
+  // Nothing would be created → do NOT create the customer/contact. Return the per-unit failures.
+  if (!anyWritable) {
+    return { customerRef: "", contactRef: "", units: units.map((_, i) => ({ index: i, result: dry[i]! })), ok: false };
+  }
+
+  // At least one unit is writable — now it's safe to create the customer/contact.
+  const customerRef = await resolveCustomerRef(customer, actor, db);
+  const contactRef = await resolveContactRef(contact, customerRef, actor, db);
+
+  const results: BatchUnitResult[] = [];
+  for (const [i, fd] of units.entries()) {
+    const known = dry[i];
+    if (known && !known.ok) {
+      // Already proven non-writable in the dry run — keep that result, don't re-attempt.
+      results.push({ index: i, result: known });
+      continue;
+    }
+    fd.set(spec.customerRefColumn, customerRef);
+    fd.set(spec.contactRefColumn, contactRef);
+    results.push({ index: i, result: await createUnit(spec, fd, actor, db, opts) });
+  }
+
+  return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
 }
 
 /**

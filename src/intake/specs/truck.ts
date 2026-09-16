@@ -121,6 +121,8 @@ export const truckSpec: IntakeSpec = {
   ],
   vinColumn: "vin",
   nameColumn: "sf_name",
+  customerRefColumn: "fcr_collision_customer",
+  contactRefColumn: "fcr_collision_contacts",
   engine: applyTruckStatusEngine,
   validate: validateTruck,
 };

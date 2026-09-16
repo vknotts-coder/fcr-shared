@@ -305,6 +305,8 @@ export const trailerSpec = {
     ],
     vinColumn: "full_vin",
     nameColumn: "sf_name",
+    customerRefColumn: "fcr_collision_account",
+    contactRefColumn: "fcr_collision_contact",
     engine: applyTrailerStatusEngine,
     validate: validateTrailer,
 };
