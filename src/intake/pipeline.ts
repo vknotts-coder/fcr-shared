@@ -236,6 +236,10 @@ export async function updateUnit(
   // this package needn't know which columns are reverse-synced. Inert until DISPATCH_FIELD_SCOPED_SYNC
   // is on (the reverse sync ignores the column otherwise); safe to populate now. `changes` is
   // non-empty here (the no-op guard returned above), so this never writes an empty array.
+  // Lifecycle: the reverse push (fcr-dispatch pushDispatchEdits / defaultClearFlag) OWNS clearing
+  // dispatch_dirty_cols after it syncs — this path only accumulates. It is a denormalized mirror of
+  // event_log.changes chosen deliberately to match the existing #119 field-scoped-sync mechanism the
+  // reverse push already reads, rather than re-deriving a per-row watermark from event_log.
   const dirtyCols = changes.map((c) => c.field);
 
   const keys = Object.keys(cols);
