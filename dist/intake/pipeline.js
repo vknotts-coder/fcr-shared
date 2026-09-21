@@ -164,23 +164,25 @@ export async function createUnit(spec, formData, actor, db, opts = {}) {
 }
 /**
  * Create MANY units for ONE customer in a single intake (the "one customer, multiple units at
- * once" flow). Resolves the customer + contact ONCE — picking existing rows or creating them
- * inline (resolveCustomerRef/resolveContactRef) — then injects that shared ref into each unit's
- * FormData and calls `createUnit` per unit, so the whole batch hangs off the same audited create
- * path (dedupe + validation + event) as a single create.
+ * once" flow). Resolves the customer + contact ONCE (an existing ref, or a new inline row) and
+ * BUILDS the audited INSERT+event statement for the customer, the contact, and each writable unit
+ * (buildCustomerInsert / buildContactInsert / buildUnitStatement) — the same audited create shape
+ * as a single createUnit, but built rather than executed inline.
  *
- * ORPHAN-SAFE (review #20): the customer/contact are created ONLY after a dry-run proves at least
- * one unit is actually writable — so an all-failing batch (every unit a dup or invalid) can't leave
- * a customer/contact with sf_id NULL and zero units, which reverse-sync would push to the real SF
- * org as a junk unit-less record. The dry run parses/validates/dedupes each unit WITHOUT writing;
- * a new customer/contact ref doesn't exist yet, so its soft-FK existence check is skipped for the
- * dry run (a placeholder satisfies the required-field validation) and enforced for real by the
- * per-unit createUnit once the ref is created.
+ * ORPHAN-SAFE (review #20): the customer/contact are only built after a dry-run proves at least one
+ * unit is writable — so an all-failing batch can't leave a customer/contact with sf_id NULL and
+ * zero units, which reverse-sync would push to the real SF org as a junk unit-less record. The dry
+ * run parses/validates/dedupes each unit WITHOUT writing; a new customer/contact ref doesn't exist
+ * yet, so its soft-FK existence check is skipped for the dry run (a placeholder satisfies the
+ * required-field validation) and enforced for real once the row is created. The dry run ALSO
+ * dedupes within the batch (a later unit sharing sf_name / non-blank VIN with an earlier writable
+ * one, unless confirmDuplicate is set), since none of the batch's own inserts are visible to it.
  *
- * v1 is still SEQUENTIAL and non-transactional once past the gate: units are created one by one and
- * a unit that fails is reported in its `units[]` entry while the writable ones proceed (partial
- * success). Full batch atomicity is a follow-up (needs a transaction-scoped Queryable). Retry a
- * failed unit with `confirmDuplicate` and the now-existing customer as `existingSfId`/`existingRef`.
+ * ATOMICITY (fcr-shared#22): pass `opts.tx` (a TxRunner) and the whole batch — customer + contact +
+ * writable units — commits or rolls back in ONE transaction, so a mid-batch failure can never
+ * orphan a customer/contact + partial units. WITHOUT a TxRunner it falls back to running the built
+ * statements sequentially on `db`: partial success is possible (a mid-batch throw leaves earlier
+ * writes committed), the pre-#22 behavior. `ok` is true iff every unit was created, either way.
  *
  * Caller still validates a new customer/contact has a non-empty name, as the app action does today.
  */
