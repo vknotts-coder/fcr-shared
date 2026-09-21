@@ -7,6 +7,21 @@ export interface Queryable {
         rows: T[];
     }>;
 }
+/** A built, parameterized SQL statement — `eventInsert`'s output shape. */
+export interface Statement {
+    text: string;
+    params: unknown[];
+}
+/** Optional atomic-batch seam for the intake engine's create-MULTIPLE flow. `transaction`
+ *  runs the given statements as ONE all-or-nothing transaction (any failure rolls the whole
+ *  batch back), so createUnits can create the shared customer/contact + N units atomically
+ *  instead of the sequential, partial-success default. Driver-agnostic like `Queryable`: a
+ *  consumer implements it with `@neondatabase/serverless`'s `neon(url).transaction([...])`
+ *  (over HTTP — no WebSocket) or with node-postgres BEGIN/COMMIT on a single client. When no
+ *  TxRunner is passed, createUnits keeps its sequential fallback. */
+export interface TxRunner {
+    transaction(statements: Statement[]): Promise<void>;
+}
 /**
  * Load a logged-in username's {@link Principal}: the account id and the full unioned
  * permission set across all the account's (non-deleted) assignments. Pure data access
