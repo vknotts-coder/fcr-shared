@@ -59,25 +59,48 @@ describe("createUnits — atomic transactional path (#22)", () => {
     expect(calls.some((c) => c.text.includes("INSERT INTO"))).toBe(false);
   });
 
-  it("name-dedup: a same-name UNSYNCED customer is reused — no customer INSERT in the batch", async () => {
-    const existingId = "0554eff4-a5aa-4a59-a3b3-e4a93ad28ece";
-    const { db } = fakeDb((text) => {
-      if (text.includes("sf_id IS NULL")) return { rows: [{ id: existingId }] }; // name-dedup hit
-      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] }; // reused customer's ref exists
-      return { rows: [], rowCount: 1 };
-    });
+  it("intra-batch dedupe: a 2nd unit with the same sf_name is rejected, not double-inserted", async () => {
+    const { db } = fakeDb(noDedup);
     const txBatches: Statement[][] = [];
     const tx: TxRunner = { async transaction(stmts) { txBatches.push(stmts); } };
 
+    // confirmDuplicate defaults to false → intra-batch dedupe active.
+    const res = await createUnits(trailerSpec, NEW_CUST, NEW_CONTACT, [form({ sf_name: "DUP-1" }), form({ sf_name: "DUP-1" })], ACTOR, db, { tx });
+
+    expect(res.ok).toBe(false); // not every unit succeeded
+    expect(res.units[0].result.ok).toBe(true);
+    const second = res.units[1].result;
+    expect(second.ok).toBe(false);
+    expect(second.ok === false && "duplicates" in second).toBe(true);
+    // exactly ONE trailer INSERT reached the batch (the dup never got built)
+    expect(txBatches[0]!.filter((s) => s.text.includes("INSERT INTO fcr_core.trailer"))).toHaveLength(1);
+  });
+
+  it("atomic path reports ok:false on a partial batch (a non-writable unit), not a hardcoded true", async () => {
+    const { db } = fakeDb(noDedup);
+    const txBatches: Statement[][] = [];
+    const tx: TxRunner = { async transaction(stmts) { txBatches.push(stmts); } };
+
+    // Unit B has an over-length VIN → fails validation → non-writable; unit A is fine.
+    const res = await createUnits(trailerSpec, NEW_CUST, NEW_CONTACT, [form({ sf_name: "OK-1" }), form({ sf_name: "BAD-2", full_vin: "123456789012345678901" })], ACTOR, db, { confirmDuplicate: true, tx });
+
+    expect(res.ok).toBe(false);
+    expect(res.units[0].result.ok).toBe(true);
+    expect(res.units[1].result.ok).toBe(false);
+    expect(txBatches[0]!.filter((s) => s.text.includes("INSERT INTO fcr_core.trailer"))).toHaveLength(1);
+  });
+
+  it("atomic rollback surfaces a GENERIC message, not the raw driver error", async () => {
+    const { db } = fakeDb(noDedup);
+    const tx: TxRunner = { async transaction() { throw new Error("duplicate key value violates unique constraint \"customer_pkey\""); } };
+
     const res = await createUnits(trailerSpec, NEW_CUST, NEW_CONTACT, [form({ sf_name: "U-1" })], ACTOR, db, { confirmDuplicate: true, tx });
 
-    expect(res.ok).toBe(true);
-    expect(res.customerRef).toBe(existingId);
-    const batch = txBatches[0]!;
-    expect(batch.some((s) => s.text.includes("INSERT INTO fcr_core.customer"))).toBe(false); // reused, not re-created
-    // the unit references the reused customer ref
-    const unit = batch.find((s) => s.text.includes("INSERT INTO fcr_core.trailer"))!;
-    expect(unit.params).toContain(existingId);
+    expect(res.ok).toBe(false);
+    const first = res.units[0].result;
+    const msg = first.ok === false && "errors" in first ? first.errors[0].message : "";
+    expect(msg).not.toContain("constraint");
+    expect(msg).not.toContain("customer_pkey");
   });
 
   it("fallback (no TxRunner) keeps the sequential behavior: writes go through db", async () => {

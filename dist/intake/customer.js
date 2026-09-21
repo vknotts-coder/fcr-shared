@@ -19,23 +19,6 @@ import { eventInsert, diffChanges } from "../events/index.js";
 import { isBlank } from "./coerce.js";
 // Trim to a stored value or null — reuses coerce.ts's isBlank so blank semantics can't drift.
 const nn = (v) => (isBlank(v) ? null : v.trim());
-/**
- * Find an existing, NOT-yet-synced customer with the same name to reuse instead of inserting a
- * duplicate (fcr-shared#22 companion). Scoped deliberately to `sf_id IS NULL` (a pending local
- * customer): it de-dupes a same-name re-entry from before reverse-sync ran, but NEVER silently
- * merges two distinct real Salesforce accounts that happen to share a name. Case-insensitive on
- * the trimmed name; most recent wins. Returns the customer's LOCAL UUID ref, or null.
- */
-export async function findUnsyncedCustomerByName(sfName, db) {
-    const name = sfName.trim();
-    if (!name)
-        return null;
-    const { rows } = await db.query(`SELECT id::text AS id FROM fcr_core.customer
-     WHERE sf_id IS NULL AND lower(btrim(sf_name)) = lower($1)
-       AND deleted_at IS NULL
-     ORDER BY created_at DESC NULLS LAST LIMIT 1`, [name]);
-    return rows[0]?.id ?? null;
-}
 /** Build the customer resolution: an existing ref unchanged (no statement), or a new
  *  fcr_core.customer row's LOCAL UUID + the built INSERT+event statement (not yet executed). */
 export async function buildCustomerInsert(input, actor) {

@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { eventInsert, diffChanges } from "../events/index.js";
 import { parseEdits } from "./coerce.js";
-import { buildCustomerInsert, buildContactInsert, findUnsyncedCustomerByName } from "./customer.js";
+import { buildCustomerInsert, buildContactInsert } from "./customer.js";
 // Bookkeeping / identity columns written but NOT business facts — kept out of the audit diff
 // so a re-save (or the create INSERT's own id) emits no phantom field change.
 const BASE_DIFF_EXCLUDE = ["id", "updated_by", "local_edit_at", "created_by", "created_by_name"];
@@ -191,34 +191,49 @@ export async function createUnits(spec, customer, contact, units, actor, db, opt
     // Empty batch → nothing to create; never resolve (and so never orphan) a customer/contact.
     if (units.length === 0)
         return { customerRef: "", contactRef: "", units: [], ok: false };
-    // Name-dedup (fcr-shared#22 companion): a NEW customer whose name matches an existing UNSYNCED
-    // (sf_id NULL) customer reuses that row instead of inserting a duplicate — scoped to unsynced so
-    // two distinct real SF accounts sharing a name are never merged. Done here (before the gate) so
-    // the reused ref is treated as `existing` (its soft-FK existence check runs like any other).
-    let eff = customer;
-    if ("newCustomer" in customer) {
-        const existing = await findUnsyncedCustomerByName(customer.newCustomer.sfName, db);
-        if (existing)
-            eff = { existingSfId: existing };
-    }
     // Dry-run gate. For a new customer/contact the ref doesn't exist yet — inject a placeholder and
     // skip its existence check; an existing ref is real and checked normally.
-    const custIsNew = "newCustomer" in eff;
+    const custIsNew = "newCustomer" in customer;
     const contactIsNew = "newContact" in contact;
     const skipRefColumns = new Set();
     if (custIsNew)
         skipRefColumns.add(spec.customerRefColumn);
     if (contactIsNew)
         skipRefColumns.add(spec.contactRefColumn);
-    const dryCustomerRef = custIsNew ? DRYRUN_REF : eff.existingSfId;
+    const dryCustomerRef = custIsNew ? DRYRUN_REF : customer.existingSfId;
     const dryContactRef = contactIsNew ? DRYRUN_REF : contact.existingRef;
-    // Per unit: the ok prep (its cols will be written for real) or the failure to keep as-is.
+    // Dry-run gate + INTRA-BATCH dedupe. prepareCreate reads the live DB once per unit against the
+    // pristine tables — so none of the batch's own inserts are visible to each other. We therefore
+    // also reject a unit that duplicates an EARLIER writable unit in the SAME submission (same
+    // sf_name, or same non-blank VIN), the check the old per-unit createUnit did against the
+    // accumulating DB. Skipped when confirmDuplicate is set (operator already said "create anyway").
+    const norm = (v) => String(v ?? "").trim().toUpperCase();
+    const seenNames = new Set();
+    const seenVins = new Set();
     const dry = [];
     let anyWritable = false;
     for (const fd of units) {
         fd.set(spec.customerRefColumn, dryCustomerRef);
         fd.set(spec.contactRefColumn, dryContactRef);
-        const prep = await prepareCreate(spec, fd, db, { confirmDuplicate: opts.confirmDuplicate, skipRefColumns });
+        let prep = await prepareCreate(spec, fd, db, { confirmDuplicate: opts.confirmDuplicate, skipRefColumns });
+        if (prep.ok && !opts.confirmDuplicate) {
+            const sfName = String(fd.get(spec.nameColumn) ?? "");
+            const name = norm(sfName);
+            const vin = norm(fd.get(spec.vinColumn));
+            const hit = name && seenNames.has(name)
+                ? { unitType: spec.unitType, id: "", sfName, matchedOn: "name" }
+                : vin && seenVins.has(vin)
+                    ? { unitType: spec.unitType, id: "", sfName, matchedOn: "vin" }
+                    : null;
+            if (hit)
+                prep = { ok: false, duplicates: [hit] };
+            else {
+                if (name)
+                    seenNames.add(name);
+                if (vin)
+                    seenVins.add(vin);
+            }
+        }
         if (prep.ok)
             anyWritable = true;
         dry.push(prep);
@@ -229,7 +244,7 @@ export async function createUnits(spec, customer, contact, units, actor, db, opt
     }
     // At least one unit is writable. BUILD the customer + contact + writable-unit statements (no
     // execution yet), reusing each unit's dry-run cols with the now-known real refs.
-    const cust = await buildCustomerInsert(eff, actor);
+    const cust = await buildCustomerInsert(customer, actor);
     const cont = await buildContactInsert(contact, cust.ref, actor);
     const customerRef = cust.ref;
     const contactRef = cont.ref;
@@ -238,37 +253,45 @@ export async function createUnits(spec, customer, contact, units, actor, db, opt
         writeStmts.push(cust.statement);
     if (cont.statement)
         writeStmts.push(cont.statement);
-    // Per writable unit, remember its position + built id/emails so we can assemble results either way.
-    const built = [];
+    const builtByIndex = new Map();
     for (const [i, prep] of dry.entries()) {
         if (!prep.ok)
             continue;
         const cols = { ...prep.cols, [spec.customerRefColumn]: customerRef, [spec.contactRefColumn]: contactRef };
         const { id, statement } = await buildUnitStatement(spec, cols, actor);
         writeStmts.push(statement);
-        built.push({ index: i, id, emails: prep.emails });
+        builtByIndex.set(i, { id, emails: prep.emails });
     }
-    const okUnit = (b) => ({ index: b.index, result: { ok: true, id: b.id, emails: b.emails } });
+    // ONE place assembles the per-unit results from the dry outcomes + built ids (index-addressable).
+    const assemble = () => dry.map((prep, i) => {
+        if (!prep.ok)
+            return { index: i, result: prep };
+        const b = builtByIndex.get(i);
+        return { index: i, result: { ok: true, id: b.id, emails: b.emails } };
+    });
     if (opts.tx) {
-        // ATOMIC path: the whole batch (customer + contact + N units) commits or rolls back together,
-        // so a mid-batch failure can NEVER leave an orphaned customer/contact + partial units.
+        // ATOMIC path: the whole batch (customer + contact + writable units) commits or rolls back
+        // together, so a mid-batch failure can NEVER leave an orphaned customer/contact + partial units.
         try {
             await opts.tx.transaction(writeStmts);
         }
         catch (e) {
-            const message = e instanceof Error ? e.message : "batch create failed";
-            const results = dry.map((prep, i) => prep.ok ? { index: i, result: { ok: false, errors: [{ field: null, message }] } } : { index: i, result: prep });
+            // Log the real driver error server-side; surface a generic message (no Postgres internals).
+            console.error("[createUnits] atomic batch transaction failed", e);
+            const results = dry.map((prep, i) => prep.ok
+                ? { index: i, result: { ok: false, errors: [{ field: null, message: "The batch could not be saved. Please try again." }] } }
+                : { index: i, result: prep });
             return { customerRef: "", contactRef: "", units: results, ok: false };
         }
-        const results = dry.map((prep, i) => prep.ok ? okUnit(built.find((b) => b.index === i)) : { index: i, result: prep });
-        return { customerRef, contactRef, units: results, ok: true };
+        const results = assemble();
+        return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
     }
     // Sequential FALLBACK (no TxRunner): run the built statements in order. Partial success is
     // possible (the pre-#22 behavior) — a mid-batch throw leaves earlier writes committed. Callers
     // that need atomicity pass `opts.tx`.
     for (const s of writeStmts)
         await db.query(s.text, s.params);
-    const results = dry.map((prep, i) => prep.ok ? okUnit(built.find((b) => b.index === i)) : { index: i, result: prep });
+    const results = assemble();
     return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
 }
 /**
