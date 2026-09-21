@@ -1,4 +1,4 @@
-import type { Queryable } from "../rbac/index.js";
+import type { Queryable, TxRunner } from "../rbac/index.js";
 import type { Actor, ContactInput, CreateUnitsResult, CustomerInput, DuplicateHit, IntakeSpec, SaveResult } from "./types.js";
 /**
  * The dedupe guard. Given the about-to-be-written columns, looks for existing non-deleted
@@ -14,6 +14,7 @@ export declare function createUnit(spec: IntakeSpec, formData: FormData, actor: 
 }): Promise<SaveResult>;
 export declare function createUnits(spec: IntakeSpec, customer: CustomerInput, contact: ContactInput, units: FormData[], actor: Actor, db: Queryable, opts?: {
     confirmDuplicate?: boolean;
+    tx?: TxRunner;
 }): Promise<CreateUnitsResult>;
 /**
  * Edit an existing unit. Reads the before-image, runs the engine + validation over the

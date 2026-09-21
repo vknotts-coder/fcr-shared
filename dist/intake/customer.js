@@ -9,19 +9,21 @@
 // unit) and resolves the UUID → the real SF Id at push time. So a ref column holds EITHER an
 // existing row's sf_id OR a pending local UUID. checkReferences (pipeline.ts) is UUID-aware to
 // match. This is the exact mechanism fcr-sales already runs in prod.
+//
+// Each `build*Insert` returns the ref plus (for a NEW row) the built INSERT+event statement WITHOUT
+// executing it, so createUnits can run the whole batch (customer + contact + N units) inside ONE
+// TxRunner transaction (fcr-shared#22 batch atomicity). resolveCustomerRef/resolveContactRef keep
+// their execute-immediately behavior for the single-write / sequential-fallback paths.
 import { randomUUID } from "node:crypto";
-import { commitWithEvent, diffChanges } from "../events/index.js";
+import { eventInsert, diffChanges } from "../events/index.js";
 import { isBlank } from "./coerce.js";
 // Trim to a stored value or null — reuses coerce.ts's isBlank so blank semantics can't drift.
 const nn = (v) => (isBlank(v) ? null : v.trim());
-/**
- * Resolve the customer for an intake: return an existing customer's Salesforce id unchanged, or
- * create a new fcr_core.customer row (audited) and return its LOCAL UUID (reverse-sync resolves it
- * to the SF Id later — see the file header). Caller must ensure a new customer's `sfName` is present.
- */
-export async function resolveCustomerRef(input, actor, db) {
+/** Build the customer resolution: an existing ref unchanged (no statement), or a new
+ *  fcr_core.customer row's LOCAL UUID + the built INSERT+event statement (not yet executed). */
+export async function buildCustomerInsert(input, actor) {
     if ("existingSfId" in input)
-        return input.existingSfId;
+        return { ref: input.existingSfId };
     const c = input.newCustomer;
     const id = randomUUID();
     const cols = {
@@ -38,22 +40,18 @@ export async function resolveCustomerRef(input, actor, db) {
     const changes = diffChanges({}, cols, { numericCols: new Set(), dateCols: new Set(), exclude: new Set(["id", "created_by", "updated_by"]) });
     const keys = Object.keys(cols);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
-    await commitWithEvent({ source: "app", resourceType: "customer", resourceId: id, action: "create", actor: { label: actor.name }, changes, metadata: { form: "customer" } }, {
+    const { text, params } = await eventInsert({ source: "app", resourceType: "customer", resourceId: id, action: "create", actor: { label: actor.name }, changes, metadata: { form: "customer" } }, {
         text: `INSERT INTO fcr_core.customer (${keys.join(", ")}, created_at, updated_at)
              VALUES (${placeholders.join(", ")}, NOW(), NOW())`,
         params: keys.map((k) => cols[k]),
-    }, db);
-    return id;
+    });
+    return { ref: id, statement: { text, params } };
 }
-/**
- * Resolve the contact for an intake: return an existing contact's ref (sf_id or UUID) unchanged, or
- * create a new fcr_core.unit_contact row (audited) linked to `customerRef` (the just-resolved
- * customer's sf_id or local UUID) and return its LOCAL UUID. Caller must ensure a new contact's
- * `sfName` is present.
- */
-export async function resolveContactRef(input, customerRef, actor, db) {
+/** Build the contact resolution: an existing ref unchanged (no statement), or a new
+ *  fcr_core.unit_contact row's LOCAL UUID + the built INSERT+event statement (linked to customerRef). */
+export async function buildContactInsert(input, customerRef, actor) {
     if ("existingRef" in input)
-        return input.existingRef;
+        return { ref: input.existingRef };
     const c = input.newContact;
     const id = randomUUID();
     const cols = {
@@ -69,10 +67,32 @@ export async function resolveContactRef(input, customerRef, actor, db) {
     const changes = diffChanges({}, cols, { numericCols: new Set(), dateCols: new Set(), exclude: new Set(["id", "created_by_name"]) });
     const keys = Object.keys(cols);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
-    await commitWithEvent({ source: "app", resourceType: "unit_contact", resourceId: id, action: "create", actor: { label: actor.name }, changes, metadata: { form: "unit_contact" } }, {
+    const { text, params } = await eventInsert({ source: "app", resourceType: "unit_contact", resourceId: id, action: "create", actor: { label: actor.name }, changes, metadata: { form: "unit_contact" } }, {
         text: `INSERT INTO fcr_core.unit_contact (${keys.join(", ")}, created_at, updated_at)
              VALUES (${placeholders.join(", ")}, NOW(), NOW())`,
         params: keys.map((k) => cols[k]),
-    }, db);
-    return id;
+    });
+    return { ref: id, statement: { text, params } };
+}
+/**
+ * Resolve the customer for an intake: return an existing customer's ref unchanged, or create a new
+ * fcr_core.customer row (audited) and return its LOCAL UUID. Executes immediately (single-write /
+ * sequential-fallback path); createUnits' transactional path uses buildCustomerInsert instead.
+ */
+export async function resolveCustomerRef(input, actor, db) {
+    const { ref, statement } = await buildCustomerInsert(input, actor);
+    if (statement)
+        await db.query(statement.text, statement.params);
+    return ref;
+}
+/**
+ * Resolve the contact for an intake: return an existing contact's ref unchanged, or create a new
+ * fcr_core.unit_contact row (audited) linked to `customerRef` and return its LOCAL UUID. Executes
+ * immediately; createUnits' transactional path uses buildContactInsert instead.
+ */
+export async function resolveContactRef(input, customerRef, actor, db) {
+    const { ref, statement } = await buildContactInsert(input, customerRef, actor);
+    if (statement)
+        await db.query(statement.text, statement.params);
+    return ref;
 }

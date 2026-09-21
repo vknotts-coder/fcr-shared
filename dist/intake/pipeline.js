@@ -11,9 +11,9 @@
 // runs on a copy-on-write Neon branch (no sync cron there). This package writes fcr_core only;
 // it never calls Salesforce.
 import { randomUUID } from "node:crypto";
-import { commitWithEvent, eventInsert, diffChanges } from "../events/index.js";
+import { eventInsert, diffChanges } from "../events/index.js";
 import { parseEdits } from "./coerce.js";
-import { resolveCustomerRef, resolveContactRef } from "./customer.js";
+import { buildCustomerInsert, buildContactInsert } from "./customer.js";
 // Bookkeeping / identity columns written but NOT business facts — kept out of the audit diff
 // so a re-save (or the create INSERT's own id) emits no phantom field change.
 const BASE_DIFF_EXCLUDE = ["id", "updated_by", "local_edit_at", "created_by", "created_by_name"];
@@ -120,11 +120,11 @@ async function prepareCreate(spec, formData, db, opts = {}) {
     }
     return { ok: true, cols, emails };
 }
-export async function createUnit(spec, formData, actor, db, opts = {}) {
-    const prep = await prepareCreate(spec, formData, db, opts);
-    if (!prep.ok)
-        return prep;
-    const { cols, emails } = prep;
+/** Build the create INSERT+event statement for a unit from its prepared cols, WITHOUT executing —
+ *  stamps the uuid + bookkeeping, diffs the audit, and returns the built statement + the new id.
+ *  Shared by createUnit (which then runs it) and createUnits' transactional path (which collects
+ *  every statement and runs the whole batch in one TxRunner transaction). Mutates `cols`. */
+async function buildUnitStatement(spec, cols, actor) {
     const id = randomUUID();
     cols.id = id;
     cols.created_by = actor.username;
@@ -139,7 +139,7 @@ export async function createUnit(spec, formData, actor, db, opts = {}) {
     });
     const keys = Object.keys(cols);
     const placeholders = keys.map((_, i) => `$${i + 1}`);
-    await commitWithEvent({
+    const { text, params } = await eventInsert({
         source: "app",
         resourceType: spec.unitType,
         resourceId: id,
@@ -151,28 +151,38 @@ export async function createUnit(spec, formData, actor, db, opts = {}) {
         text: `INSERT INTO fcr_core.${spec.table} (${keys.join(", ")}, created_at, updated_at)
              VALUES (${placeholders.join(", ")}, NOW(), NOW())`,
         params: keys.map((k) => cols[k]),
-    }, db);
-    return { ok: true, id, emails };
+    });
+    return { id, statement: { text, params } };
+}
+export async function createUnit(spec, formData, actor, db, opts = {}) {
+    const prep = await prepareCreate(spec, formData, db, opts);
+    if (!prep.ok)
+        return prep;
+    const { id, statement } = await buildUnitStatement(spec, prep.cols, actor);
+    await db.query(statement.text, statement.params);
+    return { ok: true, id, emails: prep.emails };
 }
 /**
  * Create MANY units for ONE customer in a single intake (the "one customer, multiple units at
- * once" flow). Resolves the customer + contact ONCE — picking existing rows or creating them
- * inline (resolveCustomerRef/resolveContactRef) — then injects that shared ref into each unit's
- * FormData and calls `createUnit` per unit, so the whole batch hangs off the same audited create
- * path (dedupe + validation + event) as a single create.
+ * once" flow). Resolves the customer + contact ONCE (an existing ref, or a new inline row) and
+ * BUILDS the audited INSERT+event statement for the customer, the contact, and each writable unit
+ * (buildCustomerInsert / buildContactInsert / buildUnitStatement) — the same audited create shape
+ * as a single createUnit, but built rather than executed inline.
  *
- * ORPHAN-SAFE (review #20): the customer/contact are created ONLY after a dry-run proves at least
- * one unit is actually writable — so an all-failing batch (every unit a dup or invalid) can't leave
- * a customer/contact with sf_id NULL and zero units, which reverse-sync would push to the real SF
- * org as a junk unit-less record. The dry run parses/validates/dedupes each unit WITHOUT writing;
- * a new customer/contact ref doesn't exist yet, so its soft-FK existence check is skipped for the
- * dry run (a placeholder satisfies the required-field validation) and enforced for real by the
- * per-unit createUnit once the ref is created.
+ * ORPHAN-SAFE (review #20): the customer/contact are only built after a dry-run proves at least one
+ * unit is writable — so an all-failing batch can't leave a customer/contact with sf_id NULL and
+ * zero units, which reverse-sync would push to the real SF org as a junk unit-less record. The dry
+ * run parses/validates/dedupes each unit WITHOUT writing; a new customer/contact ref doesn't exist
+ * yet, so its soft-FK existence check is skipped for the dry run (a placeholder satisfies the
+ * required-field validation) and enforced for real once the row is created. The dry run ALSO
+ * dedupes within the batch (a later unit sharing sf_name / non-blank VIN with an earlier writable
+ * one, unless confirmDuplicate is set), since none of the batch's own inserts are visible to it.
  *
- * v1 is still SEQUENTIAL and non-transactional once past the gate: units are created one by one and
- * a unit that fails is reported in its `units[]` entry while the writable ones proceed (partial
- * success). Full batch atomicity is a follow-up (needs a transaction-scoped Queryable). Retry a
- * failed unit with `confirmDuplicate` and the now-existing customer as `existingSfId`/`existingRef`.
+ * ATOMICITY (fcr-shared#22): pass `opts.tx` (a TxRunner) and the whole batch — customer + contact +
+ * writable units — commits or rolls back in ONE transaction, so a mid-batch failure can never
+ * orphan a customer/contact + partial units. WITHOUT a TxRunner it falls back to running the built
+ * statements sequentially on `db`: partial success is possible (a mid-batch throw leaves earlier
+ * writes committed), the pre-#22 behavior. `ok` is true iff every unit was created, either way.
  *
  * Caller still validates a new customer/contact has a non-empty name, as the app action does today.
  */
@@ -194,40 +204,96 @@ export async function createUnits(spec, customer, contact, units, actor, db, opt
         skipRefColumns.add(spec.contactRefColumn);
     const dryCustomerRef = custIsNew ? DRYRUN_REF : customer.existingSfId;
     const dryContactRef = contactIsNew ? DRYRUN_REF : contact.existingRef;
-    // Per unit: null = writable (create it for real below); a failure SaveResult = keep as-is.
+    // Dry-run gate + INTRA-BATCH dedupe. prepareCreate reads the live DB once per unit against the
+    // pristine tables — so none of the batch's own inserts are visible to each other. We therefore
+    // also reject a unit that duplicates an EARLIER writable unit in the SAME submission (same
+    // sf_name, or same non-blank VIN), the check the old per-unit createUnit did against the
+    // accumulating DB. Skipped when confirmDuplicate is set (operator already said "create anyway").
+    const norm = (v) => String(v ?? "").trim().toUpperCase();
+    const seenNames = new Set();
+    const seenVins = new Set();
     const dry = [];
     let anyWritable = false;
     for (const fd of units) {
         fd.set(spec.customerRefColumn, dryCustomerRef);
         fd.set(spec.contactRefColumn, dryContactRef);
-        const prep = await prepareCreate(spec, fd, db, { confirmDuplicate: opts.confirmDuplicate, skipRefColumns });
-        if (prep.ok) {
+        let prep = await prepareCreate(spec, fd, db, { confirmDuplicate: opts.confirmDuplicate, skipRefColumns });
+        if (prep.ok && !opts.confirmDuplicate) {
+            const sfName = String(fd.get(spec.nameColumn) ?? "");
+            const name = norm(sfName);
+            const vin = norm(fd.get(spec.vinColumn));
+            const hit = name && seenNames.has(name)
+                ? { unitType: spec.unitType, id: "", sfName, matchedOn: "name" }
+                : vin && seenVins.has(vin)
+                    ? { unitType: spec.unitType, id: "", sfName, matchedOn: "vin" }
+                    : null;
+            if (hit)
+                prep = { ok: false, duplicates: [hit] };
+            else {
+                if (name)
+                    seenNames.add(name);
+                if (vin)
+                    seenVins.add(vin);
+            }
+        }
+        if (prep.ok)
             anyWritable = true;
-            dry.push(null);
-        }
-        else {
-            dry.push(prep);
-        }
+        dry.push(prep);
     }
     // Nothing would be created → do NOT create the customer/contact. Return the per-unit failures.
     if (!anyWritable) {
         return { customerRef: "", contactRef: "", units: units.map((_, i) => ({ index: i, result: dry[i] })), ok: false };
     }
-    // At least one unit is writable — now it's safe to create the customer/contact.
-    const customerRef = await resolveCustomerRef(customer, actor, db);
-    const contactRef = await resolveContactRef(contact, customerRef, actor, db);
-    const results = [];
-    for (const [i, fd] of units.entries()) {
-        const known = dry[i];
-        if (known && !known.ok) {
-            // Already proven non-writable in the dry run — keep that result, don't re-attempt.
-            results.push({ index: i, result: known });
+    // At least one unit is writable. BUILD the customer + contact + writable-unit statements (no
+    // execution yet), reusing each unit's dry-run cols with the now-known real refs.
+    const cust = await buildCustomerInsert(customer, actor);
+    const cont = await buildContactInsert(contact, cust.ref, actor);
+    const customerRef = cust.ref;
+    const contactRef = cont.ref;
+    const writeStmts = [];
+    if (cust.statement)
+        writeStmts.push(cust.statement);
+    if (cont.statement)
+        writeStmts.push(cont.statement);
+    const builtByIndex = new Map();
+    for (const [i, prep] of dry.entries()) {
+        if (!prep.ok)
             continue;
-        }
-        fd.set(spec.customerRefColumn, customerRef);
-        fd.set(spec.contactRefColumn, contactRef);
-        results.push({ index: i, result: await createUnit(spec, fd, actor, db, opts) });
+        const cols = { ...prep.cols, [spec.customerRefColumn]: customerRef, [spec.contactRefColumn]: contactRef };
+        const { id, statement } = await buildUnitStatement(spec, cols, actor);
+        writeStmts.push(statement);
+        builtByIndex.set(i, { id, emails: prep.emails });
     }
+    // ONE place assembles the per-unit results from the dry outcomes + built ids (index-addressable).
+    const assemble = () => dry.map((prep, i) => {
+        if (!prep.ok)
+            return { index: i, result: prep };
+        const b = builtByIndex.get(i);
+        return { index: i, result: { ok: true, id: b.id, emails: b.emails } };
+    });
+    if (opts.tx) {
+        // ATOMIC path: the whole batch (customer + contact + writable units) commits or rolls back
+        // together, so a mid-batch failure can NEVER leave an orphaned customer/contact + partial units.
+        try {
+            await opts.tx.transaction(writeStmts);
+        }
+        catch (e) {
+            // Log the real driver error server-side; surface a generic message (no Postgres internals).
+            console.error("[createUnits] atomic batch transaction failed", e);
+            const results = dry.map((prep, i) => prep.ok
+                ? { index: i, result: { ok: false, errors: [{ field: null, message: "The batch could not be saved. Please try again." }] } }
+                : { index: i, result: prep });
+            return { customerRef: "", contactRef: "", units: results, ok: false };
+        }
+        const results = assemble();
+        return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
+    }
+    // Sequential FALLBACK (no TxRunner): run the built statements in order. Partial success is
+    // possible (the pre-#22 behavior) — a mid-batch throw leaves earlier writes committed. Callers
+    // that need atomicity pass `opts.tx`.
+    for (const s of writeStmts)
+        await db.query(s.text, s.params);
+    const results = assemble();
     return { customerRef, contactRef, units: results, ok: results.every((r) => r.result.ok) };
 }
 /**
