@@ -1,7 +1,6 @@
 import { type Queryable } from "./seam.js";
-import { UUID_RE, type BlobVerify } from "./write.js";
+import { type BlobVerify } from "./write.js";
 export type { Queryable, BlobVerify };
-export { UUID_RE };
 export type RecordPhotoInput = {
     unitType: string;
     unitId: string;

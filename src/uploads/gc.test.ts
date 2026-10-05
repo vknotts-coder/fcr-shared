@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { reconcileUnitFileBlobs, type ListedBlob } from "./gc";
+import { reconcileUnitFileBlobs, reconcileUnitPhotoBlobs, type ListedBlob } from "./gc";
 
 // Pure unit test of the orphan-blob reconciliation (#170) with injected list/del/db fakes — no Blob,
 // no DB. Proves: a blob with a live row is kept; an orphan past the grace window is deleted; an
@@ -121,5 +121,42 @@ describe("reconcileUnitFileBlobs (#170)", () => {
     const { res, deleted } = await run({ pages: [[]], live: [] });
     expect(deleted).toEqual([]);
     expect(res).toEqual({ scanned: 0, live: 0, orphaned: 0, deleted: 0 });
+  });
+});
+
+describe("reconcileUnitPhotoBlobs (#48 S4)", () => {
+  it("defaults to the unit-photos/ prefix and reconciles against fcr_core.unit_photo (NOT unit_file)", async () => {
+    const listPrefixes: string[] = [];
+    const queries: string[] = [];
+    const deleted: string[] = [];
+    const NOW = Date.parse("2026-10-05T12:00:00Z");
+    const old = new Date(NOW - 3 * 60 * 60 * 1000);
+    const res = await reconcileUnitPhotoBlobs({
+      list: async ({ prefix }) => {
+        listPrefixes.push(prefix);
+        return {
+          blobs: [
+            { pathname: "unit-photos/trailer/A/keep.jpg", url: "https://blob.test/unit-photos/trailer/A/keep.jpg", uploadedAt: old },
+            { pathname: "unit-photos/trailer/A/orphan.jpg", url: "https://blob.test/unit-photos/trailer/A/orphan.jpg", uploadedAt: old },
+          ],
+          hasMore: false,
+        };
+      },
+      del: async (urls) => { deleted.push(...urls); },
+      db: {
+        query: async (text: string, params: unknown[]) => {
+          queries.push(text);
+          const asked = (params[0] as string[]) ?? [];
+          // only the "keep" photo is live
+          return { rows: asked.filter((p) => p.endsWith("keep.jpg")).map((p) => ({ blob_pathname: p })) };
+        },
+      },
+      now: NOW,
+    });
+    expect(listPrefixes).toEqual(["unit-photos/"]); // not unit-files/
+    expect(queries[0]).toContain("fcr_core.unit_photo"); // owning table, not unit_file
+    expect(queries[0]).not.toContain("unit_file");
+    expect(deleted).toEqual(["https://blob.test/unit-photos/trailer/A/orphan.jpg"]);
+    expect(res).toEqual({ scanned: 2, live: 1, orphaned: 1, deleted: 1 });
   });
 });

@@ -15,6 +15,7 @@ export type BlobLister = (opts: {
 }>;
 export type BlobDeleter = (urls: string[]) => Promise<void>;
 export declare const UNIT_FILES_PREFIX = "unit-files/";
+export declare const UNIT_PHOTOS_PREFIX = "unit-photos/";
 export declare const DEFAULT_GRACE_MS: number;
 export declare const MAX_DELETE_FRACTION = 0.5;
 export type GcResult = {
@@ -24,12 +25,14 @@ export type GcResult = {
     deleted: number;
     aborted?: "live-zero" | "over-fraction";
 };
-export declare function reconcileUnitFileBlobs(deps: {
+export type ReconcileDeps = {
     list: BlobLister;
     del: BlobDeleter;
     db: Queryable;
     now?: number;
     graceMs?: number;
     prefix?: string;
-}): Promise<GcResult>;
+};
+export declare function reconcileUnitFileBlobs(deps: ReconcileDeps): Promise<GcResult>;
+export declare function reconcileUnitPhotoBlobs(deps: ReconcileDeps): Promise<GcResult>;
 //# sourceMappingURL=gc.d.ts.map

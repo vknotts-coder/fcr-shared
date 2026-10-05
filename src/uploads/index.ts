@@ -17,13 +17,16 @@ export {
 
 export {
   reconcileUnitFileBlobs,
+  reconcileUnitPhotoBlobs,
   UNIT_FILES_PREFIX,
+  UNIT_PHOTOS_PREFIX,
   DEFAULT_GRACE_MS,
   MAX_DELETE_FRACTION,
   type ListedBlob,
   type BlobLister,
   type BlobDeleter,
   type GcResult,
+  type ReconcileDeps,
 } from "./gc.js";
 
 export {
@@ -44,6 +47,11 @@ export {
 
 export { streamBlob, type DownloadUrlResolver } from "./proxy.js";
 
-export { softDeleteUnitFile, type UnitFileCleanup } from "./del.js";
+export {
+  softDeleteUnitFile,
+  softDeleteUnitPhoto,
+  type UnitFileCleanup,
+  type UnitPhotoCleanup,
+} from "./del.js";
 
 export { rowsOf } from "./seam.js";

@@ -4,14 +4,14 @@
 // routinely larger), same injected db+verify seams, same prefix-pinning defence. @fcr/core stays
 // dependency-free: the blob SDK call is injected, never imported here.
 //
-// unit_photo differs from unit_file in its columns: `url` (not `blob_url`), a `caption` (not a
-// `purpose`), and images only (no PDF). Its own prefix (unit-photos/) keeps the photo token + the GC
-// sweep from colliding with files.
+// The validate+verify guard sequence is the SHARED verifyUploadInput (write.ts), parameterized by a
+// PHOTO_POLICY — so the security-critical checks live in one place and can't drift from the file core.
+// unit_photo differs from unit_file in its columns (`url` not `blob_url`, a `caption` not a `purpose`)
+// and in being images-only with its own prefix.
 import { rowsOf, type Queryable } from "./seam.js";
-import { UUID_RE, type BlobVerify } from "./write.js";
+import { verifyUploadInput, type UploadPolicy, type BlobVerify } from "./write.js";
 
 export type { Queryable, BlobVerify };
-export { UUID_RE };
 
 export type RecordPhotoInput = {
   unitType: string;
@@ -37,38 +37,35 @@ export function expectedPhotoPrefix(unitType: string, unitId: string): string {
   return `unit-photos/${unitType}/${unitId}/`;
 }
 
+const PHOTO_POLICY: UploadPolicy = {
+  allowed: PHOTO_ALLOWED,
+  maxBytes: MAX_PHOTO_BYTES,
+  prefix: expectedPhotoPrefix,
+  msg: {
+    unknownType: "Unknown unit type.",
+    badId: "Bad unit id.",
+    badContentType: "Photo must be a JPEG, PNG, HEIC, or WebP image.",
+    empty: "Photo is empty.",
+    tooLarge: "Photo is too large (max 15 MB).",
+    notAttached: "Photo is not attached to this unit.",
+    notFound: "Uploaded photo not found. Try again.",
+  },
+};
+
 export async function recordUnitPhoto(
   input: RecordPhotoInput,
   actor: { username: string; name: string },
   deps: { db: Queryable; verify: BlobVerify },
 ): Promise<PhotoWriteResult> {
-  const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
+  const { unitType, unitId, blobUrl, contentType } = input;
   // Caption is free text the user types (spaces + punctuation kept — it is NOT a filename); trim,
   // cap length, and null out when blank. Stored via a parameterized INSERT, so no escaping needed.
   const caption = input.caption?.trim().slice(0, 200) || null;
 
-  const errors: string[] = [];
-  if (unitType !== "truck" && unitType !== "trailer") errors.push("Unknown unit type.");
-  if (!UUID_RE.test(unitId)) errors.push("Bad unit id.");
-  if (!PHOTO_ALLOWED.has(contentType)) errors.push("Photo must be a JPEG, PNG, HEIC, or WebP image.");
-  if (!Number.isFinite(byteSize) || byteSize <= 0) errors.push("Photo is empty.");
-  else if (byteSize > MAX_PHOTO_BYTES) errors.push("Photo is too large (max 15 MB).");
-  if (!blobPathname.startsWith(expectedPhotoPrefix(unitType, unitId))) {
-    errors.push("Photo is not attached to this unit.");
-  }
-  if (errors.length) return { ok: false, errors };
-
-  // Prove the blob exists (and re-confirm its real pathname) before trusting the client's metadata.
-  let verified: { pathname: string; size: number };
-  try {
-    verified = await deps.verify(blobUrl);
-  } catch {
-    return { ok: false, errors: ["Uploaded photo not found. Try again."] };
-  }
-  if (!verified.pathname.startsWith(expectedPhotoPrefix(unitType, unitId))) {
-    return { ok: false, errors: ["Photo is not attached to this unit."] };
-  }
-  if (verified.size > MAX_PHOTO_BYTES) return { ok: false, errors: ["Photo is too large (max 15 MB)."] };
+  // Shared guard + verify (one home for the security-critical checks — see verifyUploadInput).
+  const v = await verifyUploadInput(input, PHOTO_POLICY, deps.verify);
+  if (!v.ok) return { ok: false, errors: v.errors };
+  const { verified } = v;
 
   try {
     const raw = await deps.db.query(
