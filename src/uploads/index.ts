@@ -27,7 +27,17 @@ export {
 } from "./gc.js";
 
 export {
+  recordUnitPhoto,
+  expectedPhotoPrefix,
+  MAX_PHOTO_BYTES,
+  PHOTO_ALLOWED_TYPES,
+  type RecordPhotoInput,
+  type PhotoWriteResult,
+} from "./photo.js";
+
+export {
   makeBeforeGenerateToken,
+  makeBeforePhotoToken,
   type BeforeGenerateToken,
   type GenerateTokenConfig,
 } from "./token.js";

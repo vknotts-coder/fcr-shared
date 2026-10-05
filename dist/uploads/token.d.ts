@@ -6,4 +6,5 @@ export type GenerateTokenConfig = {
 };
 export type BeforeGenerateToken = (pathname: string, clientPayload: string | null) => Promise<GenerateTokenConfig>;
 export declare function makeBeforeGenerateToken(authorize: () => Promise<void>): BeforeGenerateToken;
+export declare function makeBeforePhotoToken(authorize: () => Promise<void>): BeforeGenerateToken;
 //# sourceMappingURL=token.d.ts.map

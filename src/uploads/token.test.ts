@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeBeforeGenerateToken } from "./token";
+import { makeBeforeGenerateToken, makeBeforePhotoToken } from "./token";
 import { MAX_FILE_BYTES, ALLOWED_TYPES, expectedPrefix } from "./write";
+import { MAX_PHOTO_BYTES, PHOTO_ALLOWED_TYPES, expectedPhotoPrefix } from "./photo";
 
 // Pure unit test of the upload-token policy with an injected `authorize` seam — no @vercel/blob. Proves:
 // the app's authorize runs FIRST and a throw rejects before anything else; a valid request pins the
@@ -46,5 +47,30 @@ describe("makeBeforeGenerateToken", () => {
     const before = makeBeforeGenerateToken(allow);
     const evil = `${expectedPrefix("trailer", "22222222-2222-2222-2222-222222222222")}x.pdf`;
     await expect(before(evil, payload())).rejects.toThrow("not under this unit");
+  });
+});
+
+describe("makeBeforePhotoToken", () => {
+  const okPhotoPath = `${expectedPhotoPrefix("trailer", UNIT)}123-shot.jpg`;
+
+  it("runs authorize first — a rejecting authorize throws before parsing", async () => {
+    const before = makeBeforePhotoToken(deny);
+    await expect(before(okPhotoPath, "{not json")).rejects.toThrow("Not authorized.");
+  });
+
+  it("pins the PHOTO limits (images only, photo cap) + per-unit tokenPayload on a valid request", async () => {
+    const before = makeBeforePhotoToken(allow);
+    const cfg = await before(okPhotoPath, payload());
+    expect(cfg.allowedContentTypes).toEqual([...PHOTO_ALLOWED_TYPES]);
+    expect(cfg.allowedContentTypes).not.toContain("application/pdf"); // photos ≠ files
+    expect(cfg.maximumSizeInBytes).toBe(MAX_PHOTO_BYTES);
+    expect(cfg.addRandomSuffix).toBe(true);
+    expect(JSON.parse(cfg.tokenPayload)).toEqual({ unitType: "trailer", unitId: UNIT });
+  });
+
+  it("rejects a pathname under the FILE prefix, not the photo prefix (no cross-kind attach)", async () => {
+    const before = makeBeforePhotoToken(allow);
+    const filePath = `${expectedPrefix("trailer", UNIT)}123-doc.pdf`; // unit-files/, not unit-photos/
+    await expect(before(filePath, payload())).rejects.toThrow("not under this unit");
   });
 });
