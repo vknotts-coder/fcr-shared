@@ -13,25 +13,42 @@
 // @fcr/core stays dependency-free: @vercel/blob/client is NEVER imported here. The return shape is
 // exactly what handleUpload's onBeforeGenerateToken expects, typed structurally.
 import { UUID_RE, ALLOWED_TYPES, MAX_FILE_BYTES, expectedPrefix } from "./write.js";
-// Build the onBeforeGenerateToken callback for an app's upload route. `authorize` is the app's auth
-// check — it throws to reject (the thrown message becomes the 400). Then: parse the client payload,
-// validate the unit reference, and PIN the pathname to this unit's prefix so a minted token can only
-// ever produce an upload recordUnitFile will accept for this unit.
-export function makeBeforeGenerateToken(authorize) {
+import { PHOTO_ALLOWED_TYPES, MAX_PHOTO_BYTES, expectedPhotoPrefix } from "./photo.js";
+// Shared builder: `authorize` is the app's auth check — it throws to reject (the thrown message
+// becomes the 400). Then parse the client payload, validate the unit reference, and PIN the pathname
+// to this unit's prefix so a minted token can only ever produce an upload the matching record* core
+// will accept for this unit.
+function makeBeforeToken(authorize, policy) {
     return async (pathname, clientPayload) => {
         await authorize();
         const { unitType, unitId } = JSON.parse(clientPayload || "{}");
         if ((unitType !== "truck" && unitType !== "trailer") || !unitId || !UUID_RE.test(unitId)) {
             throw new Error("Bad unit reference.");
         }
-        if (!pathname.startsWith(expectedPrefix(unitType, unitId))) {
+        if (!pathname.startsWith(policy.prefix(unitType, unitId))) {
             throw new Error("File path is not under this unit.");
         }
         return {
-            allowedContentTypes: [...ALLOWED_TYPES],
-            maximumSizeInBytes: MAX_FILE_BYTES,
+            allowedContentTypes: [...policy.allowedContentTypes],
+            maximumSizeInBytes: policy.maximumSizeInBytes,
             addRandomSuffix: true,
             tokenPayload: JSON.stringify({ unitType, unitId }),
         };
     };
+}
+// Token policy for a unit_file upload (PDF/image, unit-files/ prefix).
+export function makeBeforeGenerateToken(authorize) {
+    return makeBeforeToken(authorize, {
+        prefix: expectedPrefix,
+        allowedContentTypes: ALLOWED_TYPES,
+        maximumSizeInBytes: MAX_FILE_BYTES,
+    });
+}
+// Token policy for a unit_photo upload (images only, unit-photos/ prefix).
+export function makeBeforePhotoToken(authorize) {
+    return makeBeforeToken(authorize, {
+        prefix: expectedPhotoPrefix,
+        allowedContentTypes: PHOTO_ALLOWED_TYPES,
+        maximumSizeInBytes: MAX_PHOTO_BYTES,
+    });
 }

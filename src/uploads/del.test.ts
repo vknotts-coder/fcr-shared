@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { softDeleteUnitFile } from "./del";
+import { softDeleteUnitFile, softDeleteUnitPhoto } from "./del";
 
 // Pure unit test of the soft-delete core with an injected db fake. Proves: a live row is soft-deleted
 // (deleted_at = NOW(), WHERE deleted_at IS NULL) and its cleanup fields returned; a no-match (already
@@ -52,5 +52,33 @@ describe("softDeleteUnitFile", () => {
     const res = await softDeleteUnitFile(throwingDb, "deadbeef");
     expect(res).toBeNull();
     expect(throwingDb.calls).toHaveLength(0); // never queried — guard short-circuited
+  });
+});
+
+describe("softDeleteUnitPhoto", () => {
+  const PHOTO = {
+    url: "https://blob.test/unit-photos/trailer/u/shot.jpg",
+    unit_type: "trailer",
+    unit_id: "11111111-1111-1111-1111-111111111111",
+  };
+
+  it("soft-deletes a live unit_photo row and returns url + unit ref (no SF fields)", async () => {
+    const db = fakeDb([PHOTO]);
+    const res = await softDeleteUnitPhoto(db, PHOTO.unit_id);
+    expect(res).toEqual(PHOTO);
+    const { text } = db.calls[0]!;
+    expect(text).toContain("fcr_core.unit_photo");
+    expect(text).toContain("SET deleted_at = NOW()");
+    expect(text).toContain("deleted_at IS NULL");
+  });
+
+  it("a non-uuid id returns null WITHOUT touching the db", async () => {
+    const throwingDb = {
+      calls: [] as unknown[],
+      query: async () => { throw new Error("22P02"); },
+    };
+    const res = await softDeleteUnitPhoto(throwingDb, "nope");
+    expect(res).toBeNull();
+    expect(throwingDb.calls).toHaveLength(0);
   });
 });

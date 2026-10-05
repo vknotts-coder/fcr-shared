@@ -29,39 +29,65 @@ const ALLOWED = new Set(ALLOWED_TYPES);
 export function expectedPrefix(unitType, unitId) {
     return `unit-files/${unitType}/${unitId}/`;
 }
-export async function recordUnitFile(input, actor, deps) {
+// Shared validate + verify for a client-direct upload finalize. Runs every guard BEFORE the blob
+// lookup (so a bad request never costs a head() call), then proves the blob exists and re-confirms
+// its REAL pathname + size against the policy — the defence-in-depth a lying client can't dodge.
+// recordUnitFile and recordUnitPhoto both call this so these guards can never drift between them.
+export async function verifyUploadInput(input, policy, verify) {
     const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
+    const errors = [];
+    if (unitType !== "truck" && unitType !== "trailer")
+        errors.push(policy.msg.unknownType);
+    if (!UUID_RE.test(unitId))
+        errors.push(policy.msg.badId);
+    if (!policy.allowed.has(contentType))
+        errors.push(policy.msg.badContentType);
+    if (!Number.isFinite(byteSize) || byteSize <= 0)
+        errors.push(policy.msg.empty);
+    else if (byteSize > policy.maxBytes)
+        errors.push(policy.msg.tooLarge);
+    if (!blobPathname.startsWith(policy.prefix(unitType, unitId)))
+        errors.push(policy.msg.notAttached);
+    if (errors.length)
+        return { ok: false, errors };
+    let verified;
+    try {
+        verified = await verify(blobUrl);
+    }
+    catch {
+        return { ok: false, errors: [policy.msg.notFound] };
+    }
+    if (!verified.pathname.startsWith(policy.prefix(unitType, unitId))) {
+        return { ok: false, errors: [policy.msg.notAttached] };
+    }
+    if (verified.size > policy.maxBytes)
+        return { ok: false, errors: [policy.msg.tooLarge] };
+    return { ok: true, verified };
+}
+const FILE_POLICY = {
+    allowed: ALLOWED,
+    maxBytes: MAX_FILE_BYTES,
+    prefix: expectedPrefix,
+    msg: {
+        unknownType: "Unknown unit type.",
+        badId: "Bad unit id.",
+        badContentType: "File must be a PDF or an image.",
+        empty: "File is empty.",
+        tooLarge: "File is too large (max 15 MB).",
+        notAttached: "File is not attached to this unit.",
+        notFound: "Uploaded file not found. Try again.",
+    },
+};
+export async function recordUnitFile(input, actor, deps) {
+    const { unitType, unitId, blobUrl, contentType } = input;
     const purpose = input.purpose?.trim() || null;
     // Store the clean name the user picked (not the ts-/random-suffixed storage key). Sanitize defensively.
     const filename = sanitizeFilename(input.filename || "receipt").slice(-100) || "receipt";
-    const errors = [];
-    if (unitType !== "truck" && unitType !== "trailer")
-        errors.push("Unknown unit type.");
-    if (!UUID_RE.test(unitId))
-        errors.push("Bad unit id.");
-    if (!ALLOWED.has(contentType))
-        errors.push("File must be a PDF or an image.");
-    if (!Number.isFinite(byteSize) || byteSize <= 0)
-        errors.push("File is empty.");
-    else if (byteSize > MAX_FILE_BYTES)
-        errors.push("File is too large (max 15 MB).");
-    if (!blobPathname.startsWith(expectedPrefix(unitType, unitId)))
-        errors.push("File is not attached to this unit.");
-    if (errors.length)
-        return { ok: false, errors };
-    // Prove the blob exists (and re-confirm its real pathname) before trusting the client's metadata.
-    let verified;
-    try {
-        verified = await deps.verify(blobUrl);
-    }
-    catch {
-        return { ok: false, errors: ["Uploaded file not found. Try again."] };
-    }
-    if (!verified.pathname.startsWith(expectedPrefix(unitType, unitId))) {
-        return { ok: false, errors: ["File is not attached to this unit."] };
-    }
-    if (verified.size > MAX_FILE_BYTES)
-        return { ok: false, errors: ["File is too large (max 15 MB)."] };
+    // Shared guard + verify (one home for the security-critical checks — see verifyUploadInput).
+    const v = await verifyUploadInput(input, FILE_POLICY, deps.verify);
+    if (!v.ok)
+        return { ok: false, errors: v.errors };
+    const { verified } = v;
     try {
         const raw = await deps.db.query(`INSERT INTO fcr_core.unit_file
          (unit_type, unit_id, filename, blob_url, blob_pathname, content_type, byte_size,

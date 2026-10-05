@@ -25,6 +25,38 @@ export type FileWriteResult = {
 export declare const MAX_FILE_BYTES: number;
 export declare const ALLOWED_TYPES: readonly ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"];
 export declare function expectedPrefix(unitType: string, unitId: string): string;
+export type UploadPolicy = {
+    allowed: ReadonlySet<string>;
+    maxBytes: number;
+    prefix: (unitType: string, unitId: string) => string;
+    msg: {
+        unknownType: string;
+        badId: string;
+        badContentType: string;
+        empty: string;
+        tooLarge: string;
+        notAttached: string;
+        notFound: string;
+    };
+};
+export type VerifyResult = {
+    ok: true;
+    verified: {
+        pathname: string;
+        size: number;
+    };
+} | {
+    ok: false;
+    errors: string[];
+};
+export declare function verifyUploadInput(input: {
+    unitType: string;
+    unitId: string;
+    blobUrl: string;
+    blobPathname: string;
+    contentType: string;
+    byteSize: number;
+}, policy: UploadPolicy, verify: BlobVerify): Promise<VerifyResult>;
 export declare function recordUnitFile(input: RecordFileInput, actor: {
     username: string;
     name: string;

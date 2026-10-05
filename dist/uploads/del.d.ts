@@ -8,4 +8,10 @@ export type UnitFileCleanup = {
     sf_content_version_id: string | null;
 };
 export declare function softDeleteUnitFile(db: Queryable, fileId: string): Promise<UnitFileCleanup | null>;
+export type UnitPhotoCleanup = {
+    url: string;
+    unit_type: string;
+    unit_id: string;
+};
+export declare function softDeleteUnitPhoto(db: Queryable, photoId: string): Promise<UnitPhotoCleanup | null>;
 //# sourceMappingURL=del.d.ts.map

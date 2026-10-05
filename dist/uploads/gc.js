@@ -11,6 +11,7 @@
 // any real finalize has completed. Injected seams (list/del/db) keep this unit-testable without Blob.
 import { rowsOf } from "./seam.js";
 export const UNIT_FILES_PREFIX = "unit-files/";
+export const UNIT_PHOTOS_PREFIX = "unit-photos/";
 export const DEFAULT_GRACE_MS = 60 * 60 * 1000; // 1h — far longer than a finalize takes
 const DEL_CHUNK = 100;
 // Blast-radius guard for an UNATTENDED destructive job: if a valid-but-wrong DB target (an empty/
@@ -18,10 +19,10 @@ const DEL_CHUNK = 100;
 // read as orphans, one run could wipe the whole store. Abort instead of deleting when the live set is
 // empty-but-blobs-exist, or when we'd delete more than this fraction of what we scanned.
 export const MAX_DELETE_FRACTION = 0.5;
-export async function reconcileUnitFileBlobs(deps) {
+async function reconcileBlobs(deps, source) {
     const now = deps.now ?? Date.now();
     const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
-    const prefix = deps.prefix ?? UNIT_FILES_PREFIX;
+    const prefix = deps.prefix ?? source.defaultPrefix;
     // 1) Enumerate every blob under the prefix (paginated).
     const all = [];
     let cursor;
@@ -32,9 +33,9 @@ export async function reconcileUnitFileBlobs(deps) {
     } while (cursor);
     if (all.length === 0)
         return { scanned: 0, live: 0, orphaned: 0, deleted: 0 };
-    // 2) Which of those pathnames still have a LIVE (not soft-deleted) unit_file row?
+    // 2) Which of those pathnames still have a LIVE (not soft-deleted) row in the OWNING table?
     const pathnames = all.map((b) => b.pathname);
-    const raw = await deps.db.query(`SELECT blob_pathname FROM fcr_core.unit_file
+    const raw = await deps.db.query(`SELECT blob_pathname FROM fcr_core.${source.table}
       WHERE deleted_at IS NULL AND blob_pathname = ANY($1::text[])`, [pathnames]);
     const rows = rowsOf(raw);
     const live = new Set(rows.map((r) => r.blob_pathname));
@@ -62,4 +63,15 @@ export async function reconcileUnitFileBlobs(deps) {
         deleted += batch.length;
     }
     return { scanned: all.length, live: live.size, orphaned: orphans.length, deleted };
+}
+// Orphan sweep for unit_file blobs (unit-files/ prefix, reconciled against fcr_core.unit_file).
+export function reconcileUnitFileBlobs(deps) {
+    return reconcileBlobs(deps, { table: "unit_file", defaultPrefix: UNIT_FILES_PREFIX });
+}
+// Orphan sweep for unit_photo blobs (unit-photos/ prefix, reconciled against fcr_core.unit_photo).
+// Same two-phase-upload orphan failure mode as files, same blast-radius guards — a photo-specific
+// entrypoint so the file sweep is NEVER repointed at photos (which would read every photo as an
+// orphan). The cron that calls this lives app-side (fcr-trailers#51).
+export function reconcileUnitPhotoBlobs(deps) {
+    return reconcileBlobs(deps, { table: "unit_photo", defaultPrefix: UNIT_PHOTOS_PREFIX });
 }

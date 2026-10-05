@@ -22,6 +22,7 @@ export type BlobLister = (opts: { prefix: string; cursor?: string }) => Promise<
 export type BlobDeleter = (urls: string[]) => Promise<void>;
 
 export const UNIT_FILES_PREFIX = "unit-files/";
+export const UNIT_PHOTOS_PREFIX = "unit-photos/";
 export const DEFAULT_GRACE_MS = 60 * 60 * 1000; // 1h — far longer than a finalize takes
 const DEL_CHUNK = 100;
 // Blast-radius guard for an UNATTENDED destructive job: if a valid-but-wrong DB target (an empty/
@@ -38,17 +39,25 @@ export type GcResult = {
   aborted?: "live-zero" | "over-fraction";
 };
 
-export async function reconcileUnitFileBlobs(deps: {
+export type ReconcileDeps = {
   list: BlobLister;
   del: BlobDeleter;
   db: Queryable;
   now?: number;
   graceMs?: number;
   prefix?: string;
-}): Promise<GcResult> {
+};
+
+// The live-set SOURCE: which fcr_core table + prefix a sweep reconciles against. A sweep MUST query
+// the table that owns the prefix it scans — pointing the unit_file query at unit-photos/ blobs would
+// read every photo as an orphan and hit the live-zero abort (or worse). `table` is an internal
+// constant (never user input), interpolated into the SELECT. File + photo wrappers pin their pair.
+type ReconcileSource = { table: "unit_file" | "unit_photo"; defaultPrefix: string };
+
+async function reconcileBlobs(deps: ReconcileDeps, source: ReconcileSource): Promise<GcResult> {
   const now = deps.now ?? Date.now();
   const graceMs = deps.graceMs ?? DEFAULT_GRACE_MS;
-  const prefix = deps.prefix ?? UNIT_FILES_PREFIX;
+  const prefix = deps.prefix ?? source.defaultPrefix;
 
   // 1) Enumerate every blob under the prefix (paginated).
   const all: ListedBlob[] = [];
@@ -61,10 +70,10 @@ export async function reconcileUnitFileBlobs(deps: {
 
   if (all.length === 0) return { scanned: 0, live: 0, orphaned: 0, deleted: 0 };
 
-  // 2) Which of those pathnames still have a LIVE (not soft-deleted) unit_file row?
+  // 2) Which of those pathnames still have a LIVE (not soft-deleted) row in the OWNING table?
   const pathnames = all.map((b) => b.pathname);
   const raw = await deps.db.query(
-    `SELECT blob_pathname FROM fcr_core.unit_file
+    `SELECT blob_pathname FROM fcr_core.${source.table}
       WHERE deleted_at IS NULL AND blob_pathname = ANY($1::text[])`,
     [pathnames],
   );
@@ -97,4 +106,17 @@ export async function reconcileUnitFileBlobs(deps: {
   }
 
   return { scanned: all.length, live: live.size, orphaned: orphans.length, deleted };
+}
+
+// Orphan sweep for unit_file blobs (unit-files/ prefix, reconciled against fcr_core.unit_file).
+export function reconcileUnitFileBlobs(deps: ReconcileDeps): Promise<GcResult> {
+  return reconcileBlobs(deps, { table: "unit_file", defaultPrefix: UNIT_FILES_PREFIX });
+}
+
+// Orphan sweep for unit_photo blobs (unit-photos/ prefix, reconciled against fcr_core.unit_photo).
+// Same two-phase-upload orphan failure mode as files, same blast-radius guards — a photo-specific
+// entrypoint so the file sweep is NEVER repointed at photos (which would read every photo as an
+// orphan). The cron that calls this lives app-side (fcr-trailers#51).
+export function reconcileUnitPhotoBlobs(deps: ReconcileDeps): Promise<GcResult> {
+  return reconcileBlobs(deps, { table: "unit_photo", defaultPrefix: UNIT_PHOTOS_PREFIX });
 }

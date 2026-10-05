@@ -51,36 +51,89 @@ export function expectedPrefix(unitType: string, unitId: string): string {
   return `unit-files/${unitType}/${unitId}/`;
 }
 
+// The per-kind upload policy. The ONLY differences between a unit_file and a unit_photo upload are
+// these values (prefix, allowed types, size cap, wording) — so the security-critical guard sequence
+// lives ONCE, in verifyUploadInput, parameterized by this (mirroring token.ts's makeBeforeToken).
+export type UploadPolicy = {
+  allowed: ReadonlySet<string>;
+  maxBytes: number;
+  prefix: (unitType: string, unitId: string) => string;
+  msg: {
+    unknownType: string;
+    badId: string;
+    badContentType: string;
+    empty: string;
+    tooLarge: string;
+    notAttached: string;
+    notFound: string;
+  };
+};
+
+export type VerifyResult =
+  | { ok: true; verified: { pathname: string; size: number } }
+  | { ok: false; errors: string[] };
+
+// Shared validate + verify for a client-direct upload finalize. Runs every guard BEFORE the blob
+// lookup (so a bad request never costs a head() call), then proves the blob exists and re-confirms
+// its REAL pathname + size against the policy — the defence-in-depth a lying client can't dodge.
+// recordUnitFile and recordUnitPhoto both call this so these guards can never drift between them.
+export async function verifyUploadInput(
+  input: { unitType: string; unitId: string; blobUrl: string; blobPathname: string; contentType: string; byteSize: number },
+  policy: UploadPolicy,
+  verify: BlobVerify,
+): Promise<VerifyResult> {
+  const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
+  const errors: string[] = [];
+  if (unitType !== "truck" && unitType !== "trailer") errors.push(policy.msg.unknownType);
+  if (!UUID_RE.test(unitId)) errors.push(policy.msg.badId);
+  if (!policy.allowed.has(contentType)) errors.push(policy.msg.badContentType);
+  if (!Number.isFinite(byteSize) || byteSize <= 0) errors.push(policy.msg.empty);
+  else if (byteSize > policy.maxBytes) errors.push(policy.msg.tooLarge);
+  if (!blobPathname.startsWith(policy.prefix(unitType, unitId))) errors.push(policy.msg.notAttached);
+  if (errors.length) return { ok: false, errors };
+
+  let verified: { pathname: string; size: number };
+  try {
+    verified = await verify(blobUrl);
+  } catch {
+    return { ok: false, errors: [policy.msg.notFound] };
+  }
+  if (!verified.pathname.startsWith(policy.prefix(unitType, unitId))) {
+    return { ok: false, errors: [policy.msg.notAttached] };
+  }
+  if (verified.size > policy.maxBytes) return { ok: false, errors: [policy.msg.tooLarge] };
+  return { ok: true, verified };
+}
+
+const FILE_POLICY: UploadPolicy = {
+  allowed: ALLOWED,
+  maxBytes: MAX_FILE_BYTES,
+  prefix: expectedPrefix,
+  msg: {
+    unknownType: "Unknown unit type.",
+    badId: "Bad unit id.",
+    badContentType: "File must be a PDF or an image.",
+    empty: "File is empty.",
+    tooLarge: "File is too large (max 15 MB).",
+    notAttached: "File is not attached to this unit.",
+    notFound: "Uploaded file not found. Try again.",
+  },
+};
+
 export async function recordUnitFile(
   input: RecordFileInput,
   actor: { username: string; name: string },
   deps: { db: Queryable; verify: BlobVerify },
 ): Promise<FileWriteResult> {
-  const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
+  const { unitType, unitId, blobUrl, contentType } = input;
   const purpose = input.purpose?.trim() || null;
   // Store the clean name the user picked (not the ts-/random-suffixed storage key). Sanitize defensively.
   const filename = sanitizeFilename(input.filename || "receipt").slice(-100) || "receipt";
 
-  const errors: string[] = [];
-  if (unitType !== "truck" && unitType !== "trailer") errors.push("Unknown unit type.");
-  if (!UUID_RE.test(unitId)) errors.push("Bad unit id.");
-  if (!ALLOWED.has(contentType)) errors.push("File must be a PDF or an image.");
-  if (!Number.isFinite(byteSize) || byteSize <= 0) errors.push("File is empty.");
-  else if (byteSize > MAX_FILE_BYTES) errors.push("File is too large (max 15 MB).");
-  if (!blobPathname.startsWith(expectedPrefix(unitType, unitId))) errors.push("File is not attached to this unit.");
-  if (errors.length) return { ok: false, errors };
-
-  // Prove the blob exists (and re-confirm its real pathname) before trusting the client's metadata.
-  let verified: { pathname: string; size: number };
-  try {
-    verified = await deps.verify(blobUrl);
-  } catch {
-    return { ok: false, errors: ["Uploaded file not found. Try again."] };
-  }
-  if (!verified.pathname.startsWith(expectedPrefix(unitType, unitId))) {
-    return { ok: false, errors: ["File is not attached to this unit."] };
-  }
-  if (verified.size > MAX_FILE_BYTES) return { ok: false, errors: ["File is too large (max 15 MB)."] };
+  // Shared guard + verify (one home for the security-critical checks — see verifyUploadInput).
+  const v = await verifyUploadInput(input, FILE_POLICY, deps.verify);
+  if (!v.ok) return { ok: false, errors: v.errors };
+  const { verified } = v;
 
   try {
     const raw = await deps.db.query(

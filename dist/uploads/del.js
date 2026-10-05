@@ -24,3 +24,16 @@ export async function softDeleteUnitFile(db, fileId) {
     const rows = rowsOf(raw);
     return rows[0] ?? null;
 }
+// Soft-delete a LIVE unit_photo row by id — the photo parallel of softDeleteUnitFile. Same UUID_RE
+// guard (a non-uuid would 22P02→500 against the uuid column) and same idempotent no-op on a missing
+// row, so it can't double-fire the blob delete.
+export async function softDeleteUnitPhoto(db, photoId) {
+    if (!UUID_RE.test(photoId))
+        return null;
+    const raw = await db.query(`UPDATE fcr_core.unit_photo
+        SET deleted_at = NOW()
+      WHERE id = $1 AND deleted_at IS NULL
+      RETURNING url, unit_type, unit_id`, [photoId]);
+    const rows = rowsOf(raw);
+    return rows[0] ?? null;
+}
