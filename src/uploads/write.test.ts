@@ -122,6 +122,26 @@ describe("recordUnitFile", () => {
     expect(db.calls).toHaveLength(0);
   });
 
+  it("rejects an unknown unit type BEFORE the blob lookup (type guard negative control)", async () => {
+    const db = fakeDb();
+    const { state, verify } = fakeVerify();
+    const res = await recordUnitFile(input({ unitType: "spaceship" }), ACTOR, { db, verify });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.errors.join(" ")).toContain("Unknown unit type");
+    expect(state.calls).toBe(0);
+    expect(db.calls).toHaveLength(0);
+  });
+
+  it("rejects an empty file (byteSize <= 0) BEFORE the blob lookup (empty guard negative control)", async () => {
+    const db = fakeDb();
+    const { state, verify } = fakeVerify();
+    const res = await recordUnitFile(input({ byteSize: 0 }), ACTOR, { db, verify });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.errors.join(" ")).toContain("empty");
+    expect(state.calls).toBe(0);
+    expect(db.calls).toHaveLength(0);
+  });
+
   it("re-confirms the blob's REAL pathname via verify() — a lying client payload is caught", async () => {
     const db = fakeDb();
     // verify returns a pathname OUTSIDE this unit's prefix regardless of the (valid-looking) input.

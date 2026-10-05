@@ -13,6 +13,8 @@
 // @fcr/core stays dependency-free: @vercel/blob is NOT imported. The app injects `resolveDownloadUrl`
 // (its head()-based resolver) to get a stable download url; omit it and the stored url is fetched
 // directly (a public blob is fetchable as-is).
+import { sanitizeFilename } from "./seam.js";
+
 export type DownloadUrlResolver = (storedUrl: string) => Promise<string>;
 
 export async function streamBlob(
@@ -32,8 +34,7 @@ export async function streamBlob(
     "Cache-Control": "private, max-age=300",
   };
   if (opts.filename) {
-    const safe = opts.filename.replace(/[^\w.\-]/g, "_");
-    headers["Content-Disposition"] = `inline; filename="${safe}"`;
+    headers["Content-Disposition"] = `inline; filename="${sanitizeFilename(opts.filename)}"`;
   }
 
   // A resolved (head()) url is stable; proxying keeps it inside our auth scope. Fall back to the
@@ -46,7 +47,17 @@ export async function streamBlob(
       // fall back to the stored url
     }
   }
-  const upstream = await fetch(blobUrl);
+  // A network-level failure (DNS, reset, abort, malformed url) must degrade to the same 502 as an
+  // HTTP-level one — not escape as an unhandled 500. Wrap the fetch itself, mirroring resolveDownloadUrl.
+  let upstream: Response;
+  try {
+    upstream = await fetch(blobUrl);
+  } catch {
+    return new Response(JSON.stringify({ error: "fetch failed" }), {
+      status: 502,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   if (!upstream.ok || !upstream.body) {
     return new Response(JSON.stringify({ error: "fetch failed" }), {
       status: 502,

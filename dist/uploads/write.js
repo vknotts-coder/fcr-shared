@@ -16,7 +16,7 @@
 // arbitrary public blob url to a unit. No @fcr/core/events, no SF push: unit_file is not a sync target
 // and this never touches the unit's local_edit_at. @fcr/core stays dependency-free — the blob SDK call
 // is injected, never imported here.
-import { rowsOf } from "./seam.js";
+import { rowsOf, sanitizeFilename } from "./seam.js";
 // uuid matcher — @fcr/core has no uuid util, so the uploads module carries its own (same regex the
 // apps use). A unit_id must be a real uuid before we trust it in a prefix or a query.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,7 +33,7 @@ export async function recordUnitFile(input, actor, deps) {
     const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
     const purpose = input.purpose?.trim() || null;
     // Store the clean name the user picked (not the ts-/random-suffixed storage key). Sanitize defensively.
-    const filename = (input.filename || "receipt").replace(/[^\w.\-]/g, "_").slice(-100) || "receipt";
+    const filename = sanitizeFilename(input.filename || "receipt").slice(-100) || "receipt";
     const errors = [];
     if (unitType !== "truck" && unitType !== "trailer")
         errors.push("Unknown unit type.");

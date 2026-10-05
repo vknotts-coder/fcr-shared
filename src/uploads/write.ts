@@ -16,7 +16,7 @@
 // arbitrary public blob url to a unit. No @fcr/core/events, no SF push: unit_file is not a sync target
 // and this never touches the unit's local_edit_at. @fcr/core stays dependency-free — the blob SDK call
 // is injected, never imported here.
-import { rowsOf, type Queryable } from "./seam.js";
+import { rowsOf, sanitizeFilename, type Queryable } from "./seam.js";
 
 export type { Queryable };
 
@@ -59,7 +59,7 @@ export async function recordUnitFile(
   const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
   const purpose = input.purpose?.trim() || null;
   // Store the clean name the user picked (not the ts-/random-suffixed storage key). Sanitize defensively.
-  const filename = (input.filename || "receipt").replace(/[^\w.\-]/g, "_").slice(-100) || "receipt";
+  const filename = sanitizeFilename(input.filename || "receipt").slice(-100) || "receipt";
 
   const errors: string[] = [];
   if (unitType !== "truck" && unitType !== "trailer") errors.push("Unknown unit type.");

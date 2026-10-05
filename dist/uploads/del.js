@@ -6,11 +6,17 @@
 // action (Next-specific wiring); this is only the DB mutation.
 import { rowsOf } from "./seam.js";
 import { UUID_RE } from "./write.js";
-export { UUID_RE };
 // Soft-delete a LIVE unit_file row by id. Returns the cleanup row, or null if no live row matched
 // (already deleted, or bad id). Idempotent: a second call for the same id returns null (deleted_at is
 // already set), so it can't double-fire blob/SF deletes.
+//
+// Guard the id with UUID_RE FIRST: fileId is user-supplied, the column is uuid, and a non-uuid handed
+// straight to the UPDATE makes Postgres throw `22P02 invalid input syntax for type uuid` — which would
+// surface as a 500, not the documented graceful null (the unit-test fake db hid this because it ignores
+// params). A bad id is a no-op, same as a missing row.
 export async function softDeleteUnitFile(db, fileId) {
+    if (!UUID_RE.test(fileId))
+        return null;
     const raw = await db.query(`UPDATE fcr_core.unit_file
         SET deleted_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL

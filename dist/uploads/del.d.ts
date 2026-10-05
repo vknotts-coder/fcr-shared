@@ -1,7 +1,5 @@
 import { type Queryable } from "./seam.js";
-import { UUID_RE } from "./write.js";
 export type { Queryable };
-export { UUID_RE };
 export type UnitFileCleanup = {
     blob_url: string;
     unit_type: string;

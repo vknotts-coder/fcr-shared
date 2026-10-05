@@ -35,9 +35,22 @@ describe("softDeleteUnitFile", () => {
     expect(params[0]).toBe(ROW.unit_id);
   });
 
-  it("returns null when no live row matched (already deleted / bad id) — no double-fire", async () => {
+  it("a valid uuid with no live row returns null (already deleted) — no double-fire", async () => {
     const db = fakeDb([]);
-    const res = await softDeleteUnitFile(db, "deadbeef");
+    const res = await softDeleteUnitFile(db, "33333333-3333-3333-3333-333333333333");
     expect(res).toBeNull();
+    expect(db.calls).toHaveLength(1); // a valid id DOES hit the UPDATE (which matched nothing)
+  });
+
+  it("a NON-uuid id returns null WITHOUT touching the db (the 22P02 guard, not an unhandled throw)", async () => {
+    // A real pg/neon driver throws `22P02 invalid input syntax for type uuid` on a bad cast. Model
+    // that: a db that THROWS if queried. The guard must return null before we ever reach it.
+    const throwingDb = {
+      calls: [] as unknown[],
+      query: async () => { throw new Error("22P02 invalid input syntax for type uuid"); },
+    };
+    const res = await softDeleteUnitFile(throwingDb, "deadbeef");
+    expect(res).toBeNull();
+    expect(throwingDb.calls).toHaveLength(0); // never queried — guard short-circuited
   });
 });
