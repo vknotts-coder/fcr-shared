@@ -57,7 +57,7 @@ export async function recordUnitPhoto(
   actor: { username: string; name: string },
   deps: { db: Queryable; verify: BlobVerify },
 ): Promise<PhotoWriteResult> {
-  const { unitType, unitId, blobUrl, contentType } = input;
+  const { unitType, unitId, blobUrl } = input;
   // Caption is free text the user types (spaces + punctuation kept — it is NOT a filename); trim,
   // cap length, and null out when blank. Stored via a parameterized INSERT, so no escaping needed.
   const caption = input.caption?.trim().slice(0, 200) || null;
@@ -73,7 +73,7 @@ export async function recordUnitPhoto(
          (unit_type, unit_id, url, blob_pathname, content_type, byte_size, uploaded_by_name, caption)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id`,
-      [unitType, unitId, blobUrl, verified.pathname, contentType, verified.size, actor.name, caption],
+      [unitType, unitId, blobUrl, verified.pathname, verified.contentType, verified.size, actor.name, caption],
     );
     const rows = rowsOf<{ id: string }>(raw);
     const id = rows[0]?.id;
