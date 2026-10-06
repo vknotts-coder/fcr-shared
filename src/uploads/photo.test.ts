@@ -23,11 +23,11 @@ function fakeDb() {
   };
 }
 
-function fakeVerify() {
+function fakeVerify(contentType = "image/jpeg") {
   const state = { calls: 0 };
   const verify: BlobVerify = async (url) => {
     state.calls++;
-    return { pathname: url.replace("https://blob.test/", ""), size: okSize };
+    return { pathname: url.replace("https://blob.test/", ""), size: okSize, contentType };
   };
   return { state, verify };
 }
@@ -110,7 +110,7 @@ describe("recordUnitPhoto", () => {
 
   it("rejects a lying client whose REAL blob is over-cap (verified.size guard, AFTER the lookup)", async () => {
     const db = fakeDb();
-    const verify: BlobVerify = async (url) => ({ pathname: url.replace("https://blob.test/", ""), size: MAX_PHOTO_BYTES + 1 });
+    const verify: BlobVerify = async (url) => ({ pathname: url.replace("https://blob.test/", ""), size: MAX_PHOTO_BYTES + 1, contentType: "image/jpeg" });
     const res = await recordUnitPhoto(input({ byteSize: 1000 }), ACTOR, { db, verify });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.join(" ")).toContain("too large");
@@ -119,7 +119,7 @@ describe("recordUnitPhoto", () => {
 
   it("persists the VERIFIED size, not the client-claimed byteSize", async () => {
     const db = fakeDb();
-    const verify: BlobVerify = async (url) => ({ pathname: url.replace("https://blob.test/", ""), size: 4096 });
+    const verify: BlobVerify = async (url) => ({ pathname: url.replace("https://blob.test/", ""), size: 4096, contentType: "image/jpeg" });
     await recordUnitPhoto(input({ byteSize: 999 }), ACTOR, { db, verify });
     expect(db.calls[0]!.params[5]).toBe(4096);
   });

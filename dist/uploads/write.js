@@ -20,6 +20,33 @@ import { rowsOf, sanitizeFilename } from "./seam.js";
 // uuid matcher — @fcr/core has no uuid util, so the uploads module carries its own (same regex the
 // apps use). A unit_id must be a real uuid before we trust it in a prefix or a query.
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Extension → an allowlisted content type. Browsers report an EMPTY file.type for valid PDFs, for
+// no-extension files, and for HEIC on Chrome/Firefox (only Safari sets image/heic) — which the strict
+// allowlist would otherwise reject at every layer (client gate, token edge, write core). Inferring a
+// concrete, already-allowlisted type from the name lets the client send a real content-type instead of
+// "" so the allowlist stays strict (no "allow empty" hole). Returns null for an unknown extension; the
+// caller then rejects. One map for files + photos — the per-kind allowlist still gates (a .pdf inferred
+// for a photo upload is rejected by PHOTO_ALLOWED).
+const EXT_CONTENT_TYPE = {
+    pdf: "application/pdf",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    heic: "image/heic",
+    heif: "image/heic",
+    webp: "image/webp",
+};
+export function inferContentType(filename) {
+    const m = /\.([a-z0-9]+)$/i.exec((filename || "").trim());
+    return m ? (EXT_CONTENT_TYPE[m[1].toLowerCase()] ?? null) : null;
+}
+// The effective upload content type: the browser-reported type when non-empty, else inferred from the
+// filename extension. Null when neither yields one (the caller rejects). Used client-side by the shared
+// upload hook so a concrete, allowlisted type is always sent to the Blob edge + finalize action.
+export function resolveContentType(reportedType, filename) {
+    const t = reportedType?.trim();
+    return t ? t : inferContentType(filename);
+}
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB — a scanned multi-page receipt fits; blocks abuse
 // Receipts/docs are PDFs or phone photos. Allowlist keeps someone from parking an executable/HTML on the unit.
 export const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"];
@@ -62,6 +89,11 @@ export async function verifyUploadInput(input, policy, verify) {
     }
     if (verified.size > policy.maxBytes)
         return { ok: false, errors: [policy.msg.tooLarge] };
+    // Reconcile the REAL stored content type against the allowlist (#51.2) — the declared type was
+    // checked above for fail-fast, but the blob's own stored type is what the write core will persist,
+    // so a client that declared an allowed type but uploaded a disallowed blob is caught here.
+    if (!policy.allowed.has(verified.contentType))
+        return { ok: false, errors: [policy.msg.badContentType] };
     return { ok: true, verified };
 }
 const FILE_POLICY = {
@@ -79,7 +111,7 @@ const FILE_POLICY = {
     },
 };
 export async function recordUnitFile(input, actor, deps) {
-    const { unitType, unitId, blobUrl, contentType } = input;
+    const { unitType, unitId, blobUrl } = input;
     const purpose = input.purpose?.trim() || null;
     // Store the clean name the user picked (not the ts-/random-suffixed storage key). Sanitize defensively.
     const filename = sanitizeFilename(input.filename || "receipt").slice(-100) || "receipt";
@@ -93,7 +125,7 @@ export async function recordUnitFile(input, actor, deps) {
          (unit_type, unit_id, filename, blob_url, blob_pathname, content_type, byte_size,
           purpose, uploaded_by_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id`, [unitType, unitId, filename, blobUrl, verified.pathname, contentType, verified.size, purpose, actor.name]);
+       RETURNING id`, [unitType, unitId, filename, blobUrl, verified.pathname, verified.contentType, verified.size, purpose, actor.name]);
         const rows = rowsOf(raw);
         const id = rows[0]?.id;
         if (!id)

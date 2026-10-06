@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recordUnitFile, MAX_FILE_BYTES, type BlobVerify, type RecordFileInput } from "./write";
+import { recordUnitFile, MAX_FILE_BYTES, inferContentType, resolveContentType, type BlobVerify, type RecordFileInput } from "./write";
 
 // Pure unit test of the unit_file write core with injected db + verify fakes — no Blob, no DB (the
 // dispatch runtime harness that drove this against a real CoW Neon branch stays in the app). Proves
@@ -27,12 +27,12 @@ function fakeDb() {
 
 // Fake head(): the blob "exists" and reports back the pathname/size it was asked about. Counts calls
 // so a negative control can prove the guard rejected BEFORE the blob lookup.
-function fakeVerify() {
+function fakeVerify(contentType = "application/pdf") {
   const state = { calls: 0 };
   const verify: BlobVerify = async (url) => {
     state.calls++;
     const pathname = url.replace("https://blob.test/", "");
-    return { pathname, size: okSize };
+    return { pathname, size: okSize, contentType };
   };
   return { state, verify };
 }
@@ -145,7 +145,7 @@ describe("recordUnitFile", () => {
   it("re-confirms the blob's REAL pathname via verify() — a lying client payload is caught", async () => {
     const db = fakeDb();
     // verify returns a pathname OUTSIDE this unit's prefix regardless of the (valid-looking) input.
-    const verify: BlobVerify = async () => ({ pathname: "unit-files/truck/00000000-0000-0000-0000-000000000000/x.pdf", size: okSize });
+    const verify: BlobVerify = async () => ({ pathname: "unit-files/truck/00000000-0000-0000-0000-000000000000/x.pdf", size: okSize, contentType: "application/pdf" });
     const res = await recordUnitFile(input(), ACTOR, { db, verify });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.join(" ")).toContain("not attached to this unit");
@@ -159,5 +159,54 @@ describe("recordUnitFile", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.join(" ")).toContain("not found");
     expect(db.calls).toHaveLength(0);
+  });
+
+  // #51.2 — the PERSISTED content_type is the blob's VERIFIED stored type (from head()), NOT the client's
+  // separate finalize-input claim. The finalize `contentType` field is independent of what was actually
+  // uploaded, so persisting it could store (and the download proxy could serve) a type that disagrees
+  // with the stored blob. Taking head()'s type makes the row + the served Content-Type always match.
+  it("persists the VERIFIED content type, not the client-declared one", async () => {
+    const db = fakeDb();
+    const { verify } = fakeVerify("image/png"); // blob was stored as png…
+    await recordUnitFile(input({ contentType: "application/pdf" }), ACTOR, { db, verify }); // …finalize claimed pdf
+    expect(db.calls[0]!.params[5]).toBe("image/png"); // verified stored type wins
+  });
+
+  it("re-checks the verified type against the allowlist — defense-in-depth (#51.2)", async () => {
+    // The token edge already pins allowedContentTypes, so a disallowed type should never reach the write
+    // core in practice; this guard enforces the "persisted type is allowlisted" DB invariant independently
+    // of that edge wiring, so a future edge-config regression can't let a disallowed type through to a row.
+    const db = fakeDb();
+    const { state, verify } = fakeVerify("text/html");
+    const res = await recordUnitFile(input({ contentType: "application/pdf" }), ACTOR, { db, verify });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.errors.join(" ")).toContain("PDF or an image");
+    expect(state.calls).toBe(1); // the declared type passed fail-fast; the blob WAS looked up
+    expect(db.calls).toHaveLength(0); // nothing written — the verified type failed the allowlist re-check
+  });
+});
+
+describe("inferContentType / resolveContentType (#49 empty-MIME)", () => {
+  it("infers an allowlisted type from the extension (case-insensitive)", () => {
+    expect(inferContentType("scan.PDF")).toBe("application/pdf");
+    expect(inferContentType("photo.jpg")).toBe("image/jpeg");
+    expect(inferContentType("photo.jpeg")).toBe("image/jpeg");
+    expect(inferContentType("img.PNG")).toBe("image/png");
+    expect(inferContentType("IMG_0001.HEIC")).toBe("image/heic"); // Chrome/Firefox report file.type=""
+    expect(inferContentType("img.heif")).toBe("image/heic");
+    expect(inferContentType("img.webp")).toBe("image/webp");
+  });
+
+  it("returns null for an unknown or missing extension (caller then rejects)", () => {
+    expect(inferContentType("README")).toBeNull();
+    expect(inferContentType("evil.exe")).toBeNull();
+    expect(inferContentType("")).toBeNull();
+  });
+
+  it("prefers a non-empty reported type, falls back to inference when empty", () => {
+    expect(resolveContentType("application/pdf", "whatever.bin")).toBe("application/pdf");
+    expect(resolveContentType("", "IMG_0001.heic")).toBe("image/heic"); // the empty-file.type case
+    expect(resolveContentType(undefined, "scan.pdf")).toBe("application/pdf");
+    expect(resolveContentType("  ", "mystery")).toBeNull(); // empty type + unknown ext → null
   });
 });

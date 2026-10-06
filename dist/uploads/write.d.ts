@@ -4,7 +4,10 @@ export declare const UUID_RE: RegExp;
 export type BlobVerify = (url: string) => Promise<{
     pathname: string;
     size: number;
+    contentType: string;
 }>;
+export declare function inferContentType(filename: string): string | null;
+export declare function resolveContentType(reportedType: string | undefined, filename: string): string | null;
 export type RecordFileInput = {
     unitType: string;
     unitId: string;
@@ -44,6 +47,7 @@ export type VerifyResult = {
     verified: {
         pathname: string;
         size: number;
+        contentType: string;
     };
 } | {
     ok: false;

@@ -1,4 +1,4 @@
-export { recordUnitFile, expectedPrefix, UUID_RE, MAX_FILE_BYTES, ALLOWED_TYPES, type RecordFileInput, type FileWriteResult, type BlobVerify, type Queryable, } from "./write.js";
+export { recordUnitFile, expectedPrefix, UUID_RE, MAX_FILE_BYTES, ALLOWED_TYPES, inferContentType, resolveContentType, type RecordFileInput, type FileWriteResult, type BlobVerify, type Queryable, } from "./write.js";
 export { reconcileUnitFileBlobs, reconcileUnitPhotoBlobs, UNIT_FILES_PREFIX, UNIT_PHOTOS_PREFIX, DEFAULT_GRACE_MS, MAX_DELETE_FRACTION, type ListedBlob, type BlobLister, type BlobDeleter, type GcResult, type ReconcileDeps, } from "./gc.js";
 export { recordUnitPhoto, expectedPhotoPrefix, MAX_PHOTO_BYTES, PHOTO_ALLOWED_TYPES, type RecordPhotoInput, type PhotoWriteResult, } from "./photo.js";
 export { makeBeforeGenerateToken, makeBeforePhotoToken, type BeforeGenerateToken, type GenerateTokenConfig, } from "./token.js";

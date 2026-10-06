@@ -9,6 +9,8 @@ export {
   UUID_RE,
   MAX_FILE_BYTES,
   ALLOWED_TYPES,
+  inferContentType,
+  resolveContentType,
   type RecordFileInput,
   type FileWriteResult,
   type BlobVerify,
