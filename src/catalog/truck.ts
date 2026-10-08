@@ -67,10 +67,19 @@ export const truckFields: RegistryField[] = [
   str("repair_notes", "Repair notes", "status"),
   dateF("delivery_date", "Delivered on", "delivery"),
   str("delivery_tow_drive", "Delivery mode", "delivery"),
+  str("delivery_street_address", "Delivery address", "delivery"),
+  str("delivery_zip_code", "Delivery zip", "delivery"),
+  // Added for the fcr-sales canned reports (fcr-sales #12 S3): tires/make identity, revised-estimate date,
+  // and the customer-side progress-report sender (one-hop join, like customer_name). Column spellings match
+  // fcr_core exactly — note the upstream misspelling `revised_esimate_date`. All non-sensitive/non-financial.
+  str("tires", "Tires", "identity"),
+  str("truck_make", "Make", "identity"),
+  dateF("revised_esimate_date", "Revised estimate", "status"),
   // Customer (one-hop join)
   str("customer_name", "Customer", "customer", "customer.sf_name"),
   str("customer_city", "Customer city", "customer", "customer.billing_city"),
   str("customer_state", "Customer state", "customer", "customer.billing_state"),
+  str("progress_report_sender", "Progress report sender", "customer", "customer.progress_report_sender"),
 ];
 
 export type TruckObjectOptions = {
