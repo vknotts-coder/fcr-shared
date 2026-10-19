@@ -78,6 +78,14 @@ const TRAILER_STATUSES = [
 ];
 
 const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
+// Truck "Repair Pipeline" columns (parity with TRAILER_PIPELINE_COLS, adapted to the truck schema: truck has
+// no `type`/`team`, so shop + team_leader stand in). Requires the computed day-count fields (truck.ts).
+const TRUCK_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "shop", "team_leader", "invoice_1", "days_past_due"];
+// Truck WIP columns (truck has no completetion_percentage/labor column; show shop + the repair-stage dates).
+const TRUCK_WIP_COLS = ["sf_name", "vin", "notify_date", "status", "shop", "repair_start_date", "repair_completion_date", "invoice_date"];
+// Truck pre-repair scheduling queue (mirrors the trailer scheduling preset, adapted to the truck picklist —
+// truck has "Awaiting Repair Start", not trailer's "Parts Received").
+const TRUCK_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Awaiting Repair Start"];
 // The fcr-trailers "Repair Pipeline" columns (parity with the old bespoke TrailerTable): unit, customer,
 // status, days-in-status, type, team, invoice #, days-past-due. Requires the computed day-count fields.
 const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "invoice_1", "days_past_due"];
@@ -118,6 +126,56 @@ const TRUCK_VIEWS: ListView[] = [
     defaultSort: sort("notify_date", "desc"),
     statusSelect: { options: TRUCK_STATUSES, activeExcludes: TRUCK_TERMINAL },
     locationFilter: eq("shop", "Sparta"),
+  },
+  // ── Repair-pipeline views (parity with the trailer pipeline; added for the fcr-estimating /trucks surface,
+  // fcr-shared#28). Use TRUCK_PIPELINE_COLS + the computed day-counts. Additive to the catalog — the three
+  // views above are untouched. Isolation from existing consumers (e.g. dispatch's /list) comes from the
+  // immutable-SHA tarball pin, NOT from additivity: a consumer that repins @fcr/core to >=0.24.0 inherits
+  // these four truck views too (same way dispatch already renders the trailer pipeline views).
+  {
+    slug: "scheduling",
+    object: "truck",
+    label: "Scheduling",
+    group: "overview",
+    description: "Approved, awaiting parts, or awaiting repair start — the pre-repair scheduling queue.",
+    columns: TRUCK_PIPELINE_COLS,
+    defaultSort: sort("days_in_status", "desc"),
+    filters: statusOneOf(TRUCK_SCHEDULING_STATUSES).filters,
+    filterLogic: statusOneOf(TRUCK_SCHEDULING_STATUSES).logic,
+  },
+  {
+    slug: "wip",
+    object: "truck",
+    label: "WIP",
+    group: "overview",
+    description: "Trucks in repair (started, not yet invoiced, not a total loss).",
+    columns: TRUCK_WIP_COLS,
+    defaultSort: sort("repair_start_date", "asc"),
+    filters: [notNull("repair_start_date"), isNull("invoice_date"), neq("status", "Total Loss"), isNull("status")],
+    filterLogic: "1 AND 2 AND (3 OR 4)",
+  },
+  {
+    slug: "to_invoice",
+    object: "truck",
+    label: "To Invoice",
+    group: "overview",
+    description: "Closed trucks not yet invoiced (terminal status, invoice # blank).",
+    columns: TRUCK_PIPELINE_COLS,
+    // status ∈ terminal  AND  invoice_1 IS NULL. The isNull follows the OR'd status eq()s.
+    defaultSort: sort("days_in_status", "desc"),
+    filters: [...statusOneOf(TRUCK_TERMINAL).filters, isNull("invoice_1")],
+    filterLogic: `${statusOneOf(TRUCK_TERMINAL).logic} AND ${TRUCK_TERMINAL.length + 1}`,
+  },
+  {
+    slug: "past_due",
+    object: "truck",
+    label: "Past Due",
+    group: "overview",
+    description: "Invoiced-and-unpaid trucks 30+ days past the invoice date.",
+    columns: TRUCK_PIPELINE_COLS,
+    defaultSort: sort("days_past_due", "desc"),
+    filters: [gte("days_past_due", "30")],
+    filterLogic: null,
   },
 ];
 
