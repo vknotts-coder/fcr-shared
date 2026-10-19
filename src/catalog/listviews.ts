@@ -81,7 +81,7 @@ const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_
 // Truck "Repair Pipeline" columns (parity with TRAILER_PIPELINE_COLS, adapted to the truck schema: truck has
 // no `type`/`team`, so shop + team_leader stand in). Requires the computed day-count fields (truck.ts).
 const TRUCK_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "shop", "team_leader", "invoice_1", "days_past_due"];
-// Truck WIP columns (no completetion_percentage/labor on the pipeline truck set; show shop + total_sales).
+// Truck WIP columns (truck has no completetion_percentage/labor column; show shop + the repair-stage dates).
 const TRUCK_WIP_COLS = ["sf_name", "vin", "notify_date", "status", "shop", "repair_start_date", "repair_completion_date", "invoice_date"];
 // Truck pre-repair scheduling queue (mirrors the trailer scheduling preset, adapted to the truck picklist —
 // truck has "Awaiting Repair Start", not trailer's "Parts Received").
@@ -128,8 +128,10 @@ const TRUCK_VIEWS: ListView[] = [
     locationFilter: eq("shop", "Sparta"),
   },
   // ── Repair-pipeline views (parity with the trailer pipeline; added for the fcr-estimating /trucks surface,
-  // fcr-shared#28). Use TRUCK_PIPELINE_COLS + the computed day-counts. Additive — the three views above are
-  // untouched, so dispatch's existing /list truck surface is unchanged.
+  // fcr-shared#28). Use TRUCK_PIPELINE_COLS + the computed day-counts. Additive to the catalog — the three
+  // views above are untouched. Isolation from existing consumers (e.g. dispatch's /list) comes from the
+  // immutable-SHA tarball pin, NOT from additivity: a consumer that repins @fcr/core to >=0.24.0 inherits
+  // these four truck views too (same way dispatch already renders the trailer pipeline views).
   {
     slug: "scheduling",
     object: "truck",
