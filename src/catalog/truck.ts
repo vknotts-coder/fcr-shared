@@ -11,7 +11,7 @@
 
 import type { Principal } from "../contracts/index.js";
 import type { RegistryField, RegistryObject } from "../reports/registry-core.js";
-import { str, dateF, dateTzF, numF, money } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, computed, tzToday, sfDuration } from "./fields.js";
 
 /** The truck object's field table (schema-coupled; identical across apps). */
 export const truckFields: RegistryField[] = [
@@ -75,6 +75,25 @@ export const truckFields: RegistryField[] = [
   str("tires", "Tires", "identity"),
   str("truck_make", "Make", "identity"),
   dateF("revised_esimate_date", "Revised estimate", "status"),
+  // Computed day-counts (require reports ≥ v0.7.0; expr-authored, parity with trailer.ts). Central-tz
+  // calendar day (tzToday) matching the record page's dayDiff, so counts don't drift a day in the evening
+  // (UTC). filterable ⇒ the past_due list view filters on days_past_due. NOT summable (the computed default):
+  // a now()-based count blends in-progress rows and drifts daily, so a SUM/AVG of it is meaningless.
+  computed("number", "days_in_status", "Days in status", "status", `${tzToday} - truck.status_date`),
+  // NULL unless invoiced-and-unpaid (invoice_date set, invoice_paid_date null) — mirrors the trailer field.
+  computed("number", "days_past_due", "Days past due", "status", `CASE WHEN truck.invoice_date IS NOT NULL AND truck.invoice_paid_date IS NULL THEN ${tzToday} - truck.invoice_date END`),
+  // Turn-time durations: IF(ISBLANK(end), TODAY() - start, end - start) via sfDuration — elapsed-so-far when
+  // the end date is missing, else the completed span. OPEN-INCLUSIVE ⇒ DISPLAY-ONLY, left NOT summable (an
+  // AVG/SUM would blend open rows + drift daily). NOTE: fcr_core.truck has NO estimate_start column (verified
+  // against db/fcr_core.schema.sql 2026-10-19), so trailer's summable estimate_start→complete duration has no
+  // truck analogue and is intentionally omitted.
+  computed("number", "notification_to_arrival_duration", "Notification → arrival (days)", "turnaround", sfDuration("truck.arrival_date", "truck.notify_date")),
+  computed("number", "approved_to_complete_duration", "Approved → complete (days)", "turnaround", sfDuration("truck.repair_completion_date", "truck.estimate_approved")),
+  computed("number", "repair_in_progress_duration", "Repair in progress (days)", "turnaround", sfDuration("truck.repair_completion_date", "truck.repair_start_date")),
+  computed("number", "repair_completion_to_delivery_duration", "Repair complete → delivery (days)", "turnaround", sfDuration("truck.delivery_date", "truck.repair_completion_date")),
+  // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that; open-inclusive
+  // once arrival exists.
+  computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", `CASE WHEN truck.arrival_date IS NULL THEN NULL ELSE COALESCE(truck.delivery_date, ${tzToday}) - truck.arrival_date END`),
   // Customer (one-hop join)
   str("customer_name", "Customer", "customer", "customer.sf_name"),
   str("customer_city", "Customer city", "customer", "customer.billing_city"),
