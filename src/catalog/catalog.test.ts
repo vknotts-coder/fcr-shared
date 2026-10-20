@@ -56,6 +56,9 @@ describe("truck object", () => {
     expect(keys).toContain("finalized_total_sales");
     expect(truckFields.find((f) => f.key === "contacts")?.path).toBe("fcr_collision_contacts");
     expect(truckFields.find((f) => f.key === "customer_name")?.path).toBe("customer.sf_name");
+    // Account FK exposed for id-exact account scoping (/trucks?account=<sf_id>): keyed like trailer, column is truck's own.
+    expect(truckFields.find((f) => f.key === "fcr_collision_account")?.path).toBe("fcr_collision_customer");
+    expect(truckFields.find((f) => f.key === "fcr_collision_account")?.filterable).toBe(true);
     // financials are sensitive; identity/status are not
     expect(truckFields.find((f) => f.key === "total_sales")?.sensitive).toBe(true);
     expect(truckFields.find((f) => f.key === "sf_name")?.sensitive).toBeUndefined();

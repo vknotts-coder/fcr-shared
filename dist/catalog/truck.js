@@ -89,6 +89,11 @@ export const truckFields = [
     // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that; open-inclusive
     // once arrival exists.
     computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", `CASE WHEN truck.arrival_date IS NULL THEN NULL ELSE COALESCE(truck.delivery_date, ${tzToday}) - truck.arrival_date END`),
+    // Account FK — the stable customer.sf_id link (truck's column is fcr_collision_customer). Filterable so an
+    // account-scoped list (a search hit → /trucks?account=<sf_id>) can filter on it id-exact; not a friendly
+    // display column, so section=customer. Keyed `fcr_collision_account` to match trailer.ts so the consuming
+    // app's account-overlay filter wiring is uniform across both objects.
+    str("fcr_collision_account", "Account (SF id)", "customer", "fcr_collision_customer"),
     // Customer (one-hop join)
     str("customer_name", "Customer", "customer", "customer.sf_name"),
     str("customer_city", "Customer city", "customer", "customer.billing_city"),
