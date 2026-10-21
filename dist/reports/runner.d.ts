@@ -97,5 +97,5 @@ export declare function validateReport(raw: unknown, principal: Principal, catal
 export declare function runReport(raw: unknown, principal: Principal, db: Queryable, catalog: RegistryObject[], opts?: {
     rowCap?: number;
 }): Promise<RunOutcome>;
-export declare function sortSummaryRows(rows: SummaryRow[], columns: ReportColumn[], sort: ReportSort | null | undefined, groupKey?: string): SummaryRow[];
+export declare function sortSummaryRows(rows: SummaryRow[], columns: ReportColumn[], sort: ReportSort | null | undefined, groupKey?: string, groupOrder?: readonly string[]): SummaryRow[];
 //# sourceMappingURL=runner.d.ts.map

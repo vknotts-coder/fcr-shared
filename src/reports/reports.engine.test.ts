@@ -10,6 +10,7 @@ import {
   toClientObject,
   validateReport,
   buildTabularQuery,
+  sortSummaryRows,
   runReport,
   REPORT_ROW_CAP,
   EXPORT_ROW_CAP,
@@ -318,5 +319,37 @@ describe("row cap seam — on-screen default vs the higher CSV export cap", () =
     if (!out.ok || out.result.mode !== "tabular") throw new Error("expected tabular");
     expect(out.result.truncated).toBe(true);
     expect(out.result.rows.length).toBe(EXPORT_ROW_CAP);
+  });
+});
+
+describe("sortSummaryRows — grouped/summary pipeline order (sortOrder, #1)", () => {
+  const PIPELINE = ["Awaiting Approval", "Approved", "Awaiting Parts", "Parts Received", "Repair in Progress"];
+  // DB returns grouped rows unordered; here deliberately scrambled + an unlisted group.
+  const rows = [
+    { groupValue: "Repair in Progress", values: {} },
+    { groupValue: "Approved", values: {} },
+    { groupValue: "ZZ Legacy", values: {} }, // unlisted → ranks last
+    { groupValue: "Awaiting Approval", values: {} },
+    { groupValue: "Awaiting Parts", values: {} },
+  ] as Parameters<typeof sortSummaryRows>[0];
+
+  it("orders groups by pipeline order (asc) when sorted by the group field", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "asc" }, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["Awaiting Approval", "Approved", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
+  });
+
+  it("respects desc (reverse pipeline order, unlisted still grouped by rank)", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "desc" }, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["ZZ Legacy", "Repair in Progress", "Awaiting Parts", "Approved", "Awaiting Approval"]);
+  });
+
+  it("DEFAULTS an un-sorted grouped-by-status report to pipeline order (not A→Z)", () => {
+    const got = sortSummaryRows(rows, [], null, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["Awaiting Approval", "Approved", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
+  });
+
+  it("without a sortOrder, falls back to alphabetical (unchanged legacy behavior)", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "asc" }, "status").map((r) => r.groupValue);
+    expect(got).toEqual(["Approved", "Awaiting Approval", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
   });
 });

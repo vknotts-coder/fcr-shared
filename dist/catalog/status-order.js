@@ -32,9 +32,10 @@ export function statusRankExpr(objKey, order) {
     const whens = order.map((s, i) => `WHEN '${s.replace(/'/g, "''")}' THEN ${i}`).join(" ");
     return `CASE "${objKey}"."status" ${whens} ELSE ${order.length} END`;
 }
-// The `status` RegistryField for an object, carrying the pipeline-order `sortExpr` so a sort on "status"
-// orders by stage (#1). Identical to `str("status","Status","status")` in every other respect (same key,
-// label, section, filter/group behavior) — only the ORDER BY expression differs.
+// The `status` RegistryField for an object, carrying the pipeline order BOTH ways (#1): `sortExpr` (a SQL
+// rank CASE) for the tabular ORDER BY, and `sortOrder` (the same array) for the grouped/summary path, which
+// orders groups in JS. So a status sort — whether a flat list view or a by-status GROUPED report — follows SF
+// pipeline stage, not A→Z. Identical to `str("status","Status","status")` in every other respect.
 export function statusField(objKey, order) {
-    return { ...str("status", "Status", "status"), sortExpr: statusRankExpr(objKey, order) };
+    return { ...str("status", "Status", "status"), sortExpr: statusRankExpr(objKey, order), sortOrder: order };
 }

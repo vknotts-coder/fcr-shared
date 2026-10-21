@@ -18,6 +18,12 @@ type RegistryFieldWiring = ReportFieldMeta & {
      *  assembled from user input. Qualify columns with the object's table alias (its key). SELECT/WHERE/GROUP
      *  are unaffected — this changes ordering only. */
     sortExpr?: string;
+    /** The JS-side counterpart of `sortExpr` for the GROUPED/summary path, which orders group rows in JS (no
+     *  SQL ORDER BY) — the ordered domain values. When a summary is grouped by this field, `sortSummaryRows`
+     *  ranks each group by its index here (unlisted/none → last, mirroring the `sortExpr` CASE ELSE) instead of
+     *  alphabetically, so a by-status count follows SF pipeline order too. Set it from the SAME array that built
+     *  `sortExpr` so the tabular and grouped paths can't disagree. Omit for a field with no domain order. */
+    sortOrder?: readonly string[];
 };
 /**
  * One reportable field (client metadata + server wiring). EXACTLY ONE of `path` (a real column) or `expr`
