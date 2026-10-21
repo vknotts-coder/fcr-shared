@@ -94,6 +94,14 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     const ok = validateTruck({ vin: "1HGCM82633A00PICK" /* 17 */ }, { isNew: false });
     expect(ok.some((e) => e.field === "vin")).toBe(false);
   });
+  it("truck: estimator_name must be an SF picklist initial; blank allowed, bad value rejected", () => {
+    // blank clears — no error
+    expect(validateTruck({ estimator_name: "" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(false);
+    // a valid SF initial passes
+    expect(validateTruck({ estimator_name: "JR" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(false);
+    // a full name (the retired runTransition wrote these) is REFUSED so it can't dead-letter at SF
+    expect(validateTruck({ estimator_name: "Jordan" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(true);
+  });
   it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
     const { db, calls } = fakeDb((text) => {
       if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };

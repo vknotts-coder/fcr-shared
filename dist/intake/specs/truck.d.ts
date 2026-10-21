@@ -1,4 +1,5 @@
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
+export declare const ESTIMATOR_NAMES: string[];
 export declare const TRUCK_NUMERIC_COLS: Set<string>;
 export declare const TRUCK_DATE_COLS: Set<string>;
 export declare const TRUCK_FORM_FIELDS: FormField[];

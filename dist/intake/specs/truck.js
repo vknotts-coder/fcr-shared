@@ -10,6 +10,11 @@ const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
+// The SF Estimator_Name__c RESTRICTED picklist (active values, verified against the live org 2026-10-21):
+// estimator initials, NOT names. estimator_name reverse-syncs to SF (fcr-dispatch), so only these values are
+// legal — validateTruck refuses anything else so an app write can't dead-letter at SF's restricted picklist.
+// Exported as the single source of truth for the estimating assignment board's columns.
+export const ESTIMATOR_NAMES = ["JR", "BH", "JS", "AR"];
 // The truck statuses relevant at intake. The downstream pipeline statuses are intentionally NOT
 // enumerated here (they belong to the deferred truck-flow slice, keyed off the SF audit); the
 // status is engine-seeded on create and free to be set by a later, specced edit path.
@@ -26,6 +31,7 @@ export const TRUCK_FORM_FIELDS = [
     { column: "truck_make", label: "Make", section: "information", input: "text" },
     { column: "shop", label: "Shop", section: "information", input: "select", options: ["", ...SHOPS] },
     { column: "sales_team", label: "Sales Team", section: "information", input: "select", options: ["", ...SALES_TEAMS] },
+    { column: "estimator_name", label: "Estimator", section: "information", input: "select", options: ["", ...ESTIMATOR_NAMES] },
     // Incoming Transportation
     { column: "notify_date", label: "Notify Date", section: "incoming_transport", input: "date" },
     { column: "pickup_location_name", label: "Pickup Location", section: "incoming_transport", input: "text" },
@@ -75,6 +81,11 @@ export function validateTruck(state, opts = {}) {
     // rather than letting the INSERT overflow and 500.
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
         errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
+    }
+    // estimator_name reverse-syncs to the SF Estimator_Name__c RESTRICTED picklist — refuse a value outside the
+    // active set so an app write (board assign / record edit) can't dead-letter at SF. Blank is allowed (clears).
+    if (typeof state.estimator_name === "string" && !isBlank(state.estimator_name) && !ESTIMATOR_NAMES.includes(state.estimator_name)) {
+        errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
     }
     if (status === "Awaiting Pickup" &&
         state.pickup_tow_drive !== CUSTOMER_DROP_OFF_MODE &&
