@@ -226,8 +226,10 @@ export function buildTabularQuery(obj, def, fieldsByKey, principal, rowCap = REP
     let orderBy = "";
     if (def.sort) {
         const meta = fieldsByKey.get(def.sort.field);
+        // A field may carry a `sortExpr` (trusted registry SQL) to order by a domain order rather than its own
+        // column/expr — e.g. `status` sorts by SF pipeline stage, not alphabetically (status-order.ts).
         if (meta)
-            orderBy = ` ORDER BY ${fieldExpr(obj, meta)} ${def.sort.dir === "desc" ? "DESC" : "ASC"}`;
+            orderBy = ` ORDER BY ${meta.sortExpr ?? fieldExpr(obj, meta)} ${def.sort.dir === "desc" ? "DESC" : "ASC"}`;
     }
     const sql = `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${rowCap + 1}`;
     return { sql, params: where.params };

@@ -28,6 +28,13 @@ type RegistryFieldWiring = ReportFieldMeta & {
    *  truncates it to the America/Chicago calendar date for day-granular filtering/grouping/rendering,
    *  so an evening-local record isn't bucketed a day late. Omit for real `date` values (no-op). */
   dateTz?: boolean;
+  /** Optional ORDER BY override: when sorting a tabular report by THIS field, the runner uses this raw SQL
+   *  expression instead of the field's column/`expr`. Used to sort a categorical column by a domain order
+   *  rather than lexically — e.g. the `status` field ranks by SF pipeline stage (see catalog/status-order).
+   *  ⚠ TRUSTED SQL, registry-authored ONLY (same boundary as `expr`/`join.sql`): emitted verbatim, NEVER
+   *  assembled from user input. Qualify columns with the object's table alias (its key). SELECT/WHERE/GROUP
+   *  are unaffected — this changes ordering only. */
+  sortExpr?: string;
 };
 
 /**

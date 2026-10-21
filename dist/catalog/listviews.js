@@ -13,6 +13,8 @@
 // PURE module — types + data only, no server imports — safe in a client or server bundle. Field references
 // are registry KEYS (validated by validateDefinition against the viewer's permission-filtered field set
 // before any query runs); this catalog never touches SQL.
+// Status dropdown options = the canonical pipeline-order arrays (single source of truth, also the sort rank).
+import { TRAILER_STATUS_ORDER as TRAILER_STATUSES, TRUCK_STATUS_ORDER as TRUCK_STATUSES } from "./status-order.js";
 // ── Filter helpers ───────────────────────────────────────────────────────────────────────────────
 const eq = (field, value) => ({ field, op: "eq", value });
 const neq = (field, value) => ({ field, op: "neq", value });
@@ -27,25 +29,18 @@ const sort = (field, dir = "asc") => ({ field, dir });
 function statusOneOf(values, start = 1) {
     return { filters: values.map((v) => eq("status", v)), logic: `(${values.map((_, i) => String(start + i)).join(" OR ")})` };
 }
+// "status ∉ {values}" as AND'd neq()s (no `in`/`not in` operator — the mirror of statusOneOf). `start` is the
+// 1-based index of the first of these in the final filter array; returns the filters + "(a AND b …)" logic.
+// A NULL status fails `status <> 'X'` (NULL), so a null-status row is EXCLUDED — intended for these action
+// queues (a status-less trailer is a data anomaly, not a repair in flight).
+function statusNoneOf(values, start = 1) {
+    return { filters: values.map((v) => neq("status", v)), logic: `(${values.map((_, i) => String(start + i)).join(" AND ")})` };
+}
 // Terminal statuses excluded by the default "All active" mode.
 const TRUCK_TERMINAL = ["Delivered", "Total Loss", "Donor", "Sold - Total Loss", "No Repair"];
 const TRAILER_TERMINAL = ["Delivered", "Total Loss", "Do Not Repair"];
-// Full SF Status__c picklists (retrieved 2026-09-09) — the dropdown options, in pipeline order. Truck also
-// carries "Photo Estimate - Awaiting Approval" (a legacy value still on live records, absent from the
-// active picklist but verified present in the data).
-const TRUCK_STATUSES = [
-    "Awaiting Pickup Info", "Awaiting Pickup", "Pickup (Dispatch)", "Estimating", "Awaiting Approval",
-    "Photo Estimate - Awaiting Approval", "Approved", "Awaiting Parts", "Awaiting Repair Start",
-    "Repair in Progress", "Complete", "Awaiting Delivery", "Awaiting Customer Pickup", "Delivery (Dispatch)",
-    "Delivered", "Hold", "Awaiting TL Confirmation", "LEGAL HOLD", "Total Loss", "Donor", "Sold - Total Loss",
-    "No Repair", "REWORK", "FCR OWNED",
-];
-const TRAILER_STATUSES = [
-    "Awaiting Pickup Info", "Awaiting Pickup", "Customer Drop Off", "Dispatch (Pickup)", "Received", "Estimating",
-    "Awaiting Approval", "Approved", "Awaiting Parts", "LEGAL HOLD", "Parts Received", "Repair in Progress",
-    "Repair Complete", "Awaiting Delivery Info", "Awaiting Delivery", "Awaiting Customer Pickup",
-    "Delivery Dispatch", "Delivered", "Total Loss", "REWORK", "Hold", "Do Not Repair",
-];
+// (TRUCK_STATUSES / TRAILER_STATUSES — the SF Status__c picklists in pipeline order — now live in
+// status-order.ts and are imported above, so the dropdown options and the status sort rank share one array.)
 const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
 // Truck "Repair Pipeline" columns (parity with TRAILER_PIPELINE_COLS, adapted to the truck schema: truck has
 // no `type`/`team`, so shop + team_leader stand in). Requires the computed day-count fields (truck.ts).
@@ -58,8 +53,15 @@ const TRUCK_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Awaiting Repai
 // The fcr-trailers "Repair Pipeline" columns (parity with the old bespoke TrailerTable): unit, customer,
 // status, days-in-status, type, team, invoice #, days-past-due. Requires the computed day-count fields.
 const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "invoice_1", "days_past_due"];
-// Statuses grouped as the old client presets did (scheduling = pre-repair queue).
-const TRAILER_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Parts Received"];
+// "Past Due" columns (Matt 2026-10-21: repair-overdue, not AR aging) — swap invoice #/days-past-due for the
+// repair goal + days-past-goal so the row shows WHY it's overdue.
+const TRAILER_PAST_DUE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "repair_goal", "days_past_goal"];
+// Statuses at/after "Repair Complete" — a trailer here is "past the repair process" (Matt 2026-10-21), so it's
+// excluded from the pre-repair Scheduling queue and the repair-overdue Past Due view.
+const TRAILER_POST_REPAIR = [
+    "Repair Complete", "Awaiting Delivery Info", "Awaiting Delivery", "Awaiting Customer Pickup",
+    "Delivery Dispatch", "Delivered", "Total Loss", "Do Not Repair", "REWORK",
+];
 // ── The catalog ───────────────────────────────────────────────────────────────────────────────────
 const TRUCK_VIEWS = [
     {
@@ -165,11 +167,28 @@ const TRAILER_VIEWS = [
         object: "trailer",
         label: "Scheduling",
         group: "overview",
-        description: "Approved and awaiting/received parts — the pre-repair scheduling queue.",
+        // Matt 2026-10-21: estimate approved AND all parts received, not yet past repair — the ready-to-schedule
+        // queue (approved + parts in hand, repair not yet done). Replaces the old status-only {Approved / Awaiting
+        // Parts / Parts Received} preset.
+        description: "Estimate approved and all parts received, not yet past repair — the ready-to-schedule queue.",
         columns: TRAILER_PIPELINE_COLS,
         defaultSort: sort("days_in_status", "desc"),
-        filters: statusOneOf(TRAILER_SCHEDULING_STATUSES).filters,
-        filterLogic: statusOneOf(TRAILER_SCHEDULING_STATUSES).logic,
+        filters: [notNull("estimate_approved_date"), notNull("all_parts_received_date_stamped"), ...statusNoneOf(TRAILER_POST_REPAIR, 3).filters],
+        filterLogic: `1 AND 2 AND ${statusNoneOf(TRAILER_POST_REPAIR, 3).logic}`,
+    },
+    {
+        slug: "stuck_on_parts",
+        object: "trailer",
+        label: "Stuck on Parts (20+ days)",
+        group: "overview",
+        // Matt 2026-10-21: trailers that have been awaiting parts for 20+ days. Trailers track "awaiting parts" as
+        // a STATUS (there is no Awaiting-Parts DATE column on the trailer object — that's truck-only), so "20+ days
+        // out" = in the "Awaiting Parts" status for 20+ days (days_in_status, measured from status_date).
+        description: "Trailers awaiting parts for 20 or more days (in “Awaiting Parts” status ≥ 20 days).",
+        columns: TRAILER_PIPELINE_COLS,
+        defaultSort: sort("days_in_status", "desc"),
+        filters: [eq("status", "Awaiting Parts"), gte("days_in_status", "20")],
+        filterLogic: "1 AND 2",
     },
     {
         slug: "wip",
@@ -199,11 +218,15 @@ const TRAILER_VIEWS = [
         object: "trailer",
         label: "Past Due",
         group: "overview",
-        description: "Invoiced-and-unpaid trailers 30+ days past the invoice date.",
-        columns: TRAILER_PIPELINE_COLS,
-        defaultSort: sort("days_past_due", "desc"),
-        filters: [gte("days_past_due", "30")],
-        filterLogic: null,
+        // Matt 2026-10-21: REDEFINED from invoice aging to repair-overdue — repairs not complete AND past the
+        // repair goal (the estimated completion date). days_past_goal = tzToday - repair_goal (NULL when no goal),
+        // so gte 0 == repair_goal on/before today; repair_completion_date IS NULL == repairs not done; and status
+        // not past repair. (AR invoice aging now lives in the Invoicing canned reports / "15 Days Past Due".)
+        description: "Repairs not complete and past the estimated completion date (repair goal).",
+        columns: TRAILER_PAST_DUE_COLS,
+        defaultSort: sort("days_past_goal", "desc"),
+        filters: [gte("days_past_goal", "0"), isNull("repair_completion_date"), ...statusNoneOf(TRAILER_POST_REPAIR, 3).filters],
+        filterLogic: `1 AND 2 AND ${statusNoneOf(TRAILER_POST_REPAIR, 3).logic}`,
     },
 ];
 export const LIST_VIEWS = [...TRUCK_VIEWS, ...TRAILER_VIEWS];

@@ -109,6 +109,52 @@ describe("computed (expr) fields (#107 Slice A)", () => {
   });
 });
 
+describe("sortExpr — ORDER BY override (status pipeline-order sort, #1)", () => {
+  // A field with a sortExpr: SELECT/WHERE use the column; ORDER BY uses the override (a domain rank).
+  const ranked: RegistryObject = {
+    key: "ranked",
+    label: "Ranked",
+    table: "app.ranked",
+    baseWhere: "deleted_at IS NULL",
+    capability: () => true,
+    fields: [
+      { key: "name", label: "Name", type: "string", section: "identity", path: "name", filterable: true, groupable: true, summable: false },
+      {
+        key: "status", label: "Status", type: "string", section: "identity", path: "status",
+        filterable: true, groupable: true, summable: false,
+        sortExpr: `CASE "ranked"."status" WHEN 'open' THEN 0 WHEN 'closed' THEN 1 ELSE 2 END`,
+      },
+    ],
+  };
+  const rcat: RegistryObject[] = [ranked];
+  const build = (def: object) => {
+    const v = validateReport(def, admin, rcat);
+    expect(v.ok).toBe(true);
+    if (!v.ok) throw new Error(v.errors.join("; "));
+    const fieldsByKey = new Map(v.obj.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    return buildTabularQuery(v.obj, v.def, fieldsByKey, admin);
+  };
+
+  it("ORDER BY uses the sortExpr (domain rank), not the bare column", () => {
+    const q = build({ object: "ranked", columns: ["name", "status"], filters: [], sort: { field: "status", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`ORDER BY CASE "ranked"."status" WHEN 'open' THEN 0 WHEN 'closed' THEN 1 ELSE 2 END ASC`);
+    // the bare-column ORDER BY (the old alphabetical behavior) is gone
+    expect(q.sql).not.toMatch(/ORDER BY "ranked"\."status" (ASC|DESC)/);
+  });
+
+  it("SELECT and WHERE still use the column, never the sortExpr", () => {
+    const q = build({ object: "ranked", columns: ["status"], filters: [{ field: "status", op: "eq", value: "open" }], sort: { field: "status", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`"ranked"."status" AS "status"`); // SELECT = column
+    expect(q.sql).toContain(`"ranked"."status" = $1`); // WHERE = column
+    expect(q.params).toEqual(["open"]);
+  });
+
+  it("a field WITHOUT a sortExpr still orders by its column (unchanged)", () => {
+    const q = build({ object: "ranked", columns: ["name", "status"], filters: [], sort: { field: "name", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`ORDER BY "ranked"."name" ASC`);
+  });
+});
+
 describe("registry-core over an injected catalog", () => {
   it("getObjectDef resolves a known key and undefined for an unknown one", () => {
     expect(getObjectDef(catalog, "widget")?.key).toBe("widget");
