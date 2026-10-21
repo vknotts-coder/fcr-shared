@@ -11,9 +11,10 @@ const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
 // The SF Estimator_Name__c RESTRICTED picklist (active values, verified against the live org 2026-10-21):
-// estimator initials, NOT names. estimator_name reverse-syncs to SF (fcr-dispatch), so only these values are
-// legal — validateTruck refuses anything else so an app write can't dead-letter at SF's restricted picklist.
-// Exported as the single source of truth for the estimating assignment board's columns.
+// estimator initials, NOT names. estimator_name WILL reverse-sync to SF's Estimator_Name__c once the paired
+// fcr-dispatch map addition lands (fcr-estimating#18 S2 — it is not in any reverse-sync allowlist in THIS PR
+// alone); restricting to the picklist here keeps an app write from dead-lettering at SF's restricted picklist
+// when that lands. Exported as the single source of truth for the estimating assignment board's columns.
 export const ESTIMATOR_NAMES = ["JR", "BH", "JS", "AR"];
 // The truck statuses relevant at intake. The downstream pipeline statuses are intentionally NOT
 // enumerated here (they belong to the deferred truck-flow slice, keyed off the SF audit); the

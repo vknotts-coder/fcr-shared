@@ -423,6 +423,37 @@ describe("updateUnit — dispatch_dirty_cols (field-scoped reverse-sync)", () =>
     expect(res.ok).toBe(true);
     expect(calls.some((c) => c.text.includes("UPDATE fcr_core.trailer"))).toBe(false);
   });
+
+  // End-to-end proof the estimator-freeze fix holds THROUGH updateUnit (round-1 HIGH): pipeline.ts threads the
+  // before-image into validate, and validateTruck scopes the estimator check to a CHANGED value.
+  it("truck: editing an unrelated field on a legacy out-of-domain estimator row is NOT frozen", async () => {
+    const ID = "33333333-3333-3333-3333-333333333333";
+    const { db } = fakeDb((text) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] }; // ref existence
+      if (text.includes("__guard")) {
+        // legacy before-image: estimator_name holds a full name the old runTransition wrote
+        return { rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Estimating", sf_name: "TRK-1", estimator_name: "Jordan" }] };
+      }
+      return { rows: [], rowCount: 1 }; // the UPDATE
+    });
+    // Edit ONLY shop — estimator_name unchanged → the guard must not fire.
+    const res = await updateUnit(truckSpec, ID, form({ shop: "Sparta" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(true);
+  });
+
+  it("truck: CHANGING estimator_name to an out-of-domain value IS refused through updateUnit", async () => {
+    const ID = "44444444-4444-4444-4444-444444444444";
+    const { db } = fakeDb((text) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
+      if (text.includes("__guard")) {
+        return { rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Estimating", sf_name: "TRK-2", estimator_name: "JR" }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const res = await updateUnit(truckSpec, ID, form({ estimator_name: "Bob" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(false);
+    if (!res.ok && "errors" in res) expect(res.errors.some((e) => e.field === "estimator_name")).toBe(true);
+  });
 });
 
 // ── Rework validation guards — enforce the invariant server-side (§924, review #39) ────────
