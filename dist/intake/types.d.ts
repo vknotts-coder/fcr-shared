@@ -124,6 +124,7 @@ export interface IntakeSpec {
     /** Pure validation over the effective after-state. */
     validate: (state: Record<string, unknown>, opts: {
         isNew?: boolean;
+        before?: Record<string, unknown>;
     }) => ValidationError[];
 }
 export type SaveResult = {

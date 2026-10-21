@@ -321,7 +321,10 @@ export async function updateUnit(spec, id, formData, actor, db) {
     const { derived } = spec.engine(before, edits, { isNew: false });
     const cols = { ...edits, ...derived };
     const effectiveState = { ...before, ...cols };
-    const errors = [...spec.validate(effectiveState, { isNew: false }), ...(await checkReferences(spec, edits, before, db))];
+    // Pass the before-image so a validator can scope a field rule to a field the edit actually CHANGED —
+    // validate runs over the MERGED state, so an unchanged legacy value (e.g. an out-of-domain estimator_name)
+    // must not fail an edit to an unrelated field.
+    const errors = [...spec.validate(effectiveState, { isNew: false, before }), ...(await checkReferences(spec, edits, before, db))];
     if (errors.length)
         return { ok: false, errors };
     // No-op edit: skip the write, the audit event AND the local_edit_at stamp — otherwise an

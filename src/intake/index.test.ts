@@ -94,6 +94,25 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     const ok = validateTruck({ vin: "1HGCM82633A00PICK" /* 17 */ }, { isNew: false });
     expect(ok.some((e) => e.field === "vin")).toBe(false);
   });
+  it("truck: estimator_name must be an SF picklist initial; blank allowed, bad value rejected", () => {
+    // blank clears — no error
+    expect(validateTruck({ estimator_name: "" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(false);
+    // a valid SF initial passes
+    expect(validateTruck({ estimator_name: "JR" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(false);
+    // a full name (the retired runTransition wrote these) is REFUSED so it can't dead-letter at SF
+    expect(validateTruck({ estimator_name: "Jordan" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(true);
+  });
+  it("truck: a legacy out-of-domain estimator_name does NOT freeze edits to unrelated fields (scoped to changed)", () => {
+    // updateUnit validates the MERGED before-image. A legacy row holds estimator_name="Jordan"; the user edits
+    // only `shop`. estimator_name is UNCHANGED → the guard must not fire and block the unrelated edit.
+    const before = { estimator_name: "Jordan", status: "Estimating" };
+    const merged = { ...before, shop: "Sparta" }; // estimator_name carried through unchanged
+    expect(validateTruck(merged, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
+    // But actually CHANGING estimator_name to a bad value is still refused...
+    expect(validateTruck({ estimator_name: "Bob" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(true);
+    // ...and changing it to a valid initial passes.
+    expect(validateTruck({ estimator_name: "JR" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
+  });
   it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
     const { db, calls } = fakeDb((text) => {
       if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
@@ -403,6 +422,37 @@ describe("updateUnit — dispatch_dirty_cols (field-scoped reverse-sync)", () =>
     const res = await updateUnit(trailerSpec, ID, form({ status_notes: "same" }), { username: "vknotts", name: "Van" }, db);
     expect(res.ok).toBe(true);
     expect(calls.some((c) => c.text.includes("UPDATE fcr_core.trailer"))).toBe(false);
+  });
+
+  // End-to-end proof the estimator-freeze fix holds THROUGH updateUnit (round-1 HIGH): pipeline.ts threads the
+  // before-image into validate, and validateTruck scopes the estimator check to a CHANGED value.
+  it("truck: editing an unrelated field on a legacy out-of-domain estimator row is NOT frozen", async () => {
+    const ID = "33333333-3333-3333-3333-333333333333";
+    const { db } = fakeDb((text) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] }; // ref existence
+      if (text.includes("__guard")) {
+        // legacy before-image: estimator_name holds a full name the old runTransition wrote
+        return { rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Estimating", sf_name: "TRK-1", estimator_name: "Jordan" }] };
+      }
+      return { rows: [], rowCount: 1 }; // the UPDATE
+    });
+    // Edit ONLY shop — estimator_name unchanged → the guard must not fire.
+    const res = await updateUnit(truckSpec, ID, form({ shop: "Sparta" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(true);
+  });
+
+  it("truck: CHANGING estimator_name to an out-of-domain value IS refused through updateUnit", async () => {
+    const ID = "44444444-4444-4444-4444-444444444444";
+    const { db } = fakeDb((text) => {
+      if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
+      if (text.includes("__guard")) {
+        return { rows: [{ id: ID, __guard: "2026-09-16T00:00:00.000Z", status: "Estimating", sf_name: "TRK-2", estimator_name: "JR" }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const res = await updateUnit(truckSpec, ID, form({ estimator_name: "Bob" }), { username: "vknotts", name: "Van" }, db);
+    expect(res.ok).toBe(false);
+    if (!res.ok && "errors" in res) expect(res.errors.some((e) => e.field === "estimator_name")).toBe(true);
   });
 });
 

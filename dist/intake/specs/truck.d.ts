@@ -1,4 +1,5 @@
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
+export declare const ESTIMATOR_NAMES: string[];
 export declare const TRUCK_NUMERIC_COLS: Set<string>;
 export declare const TRUCK_DATE_COLS: Set<string>;
 export declare const TRUCK_FORM_FIELDS: FormField[];
@@ -12,6 +13,7 @@ export declare function applyTruckStatusEngine(before: Record<string, unknown>, 
 }): EngineResult;
 export declare function validateTruck(state: Record<string, unknown>, opts?: {
     isNew?: boolean;
+    before?: Record<string, unknown>;
 }): ValidationError[];
 export declare const truckSpec: IntakeSpec;
 //# sourceMappingURL=truck.d.ts.map

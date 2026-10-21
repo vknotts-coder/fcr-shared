@@ -4,7 +4,7 @@ export { isBlank, US_STATES, VIN_MAX_LENGTH, coerceField, parseEdits } from "./c
 export { createUnit, updateUnit, findDuplicates, createUnits } from "./pipeline.js";
 export { resolveCustomerRef, resolveContactRef } from "./customer.js";
 export { trailerSpec, applyTrailerStatusEngine, validateTrailer, TRAILER_FORM_FIELDS } from "./specs/trailer.js";
-export { truckSpec, applyTruckStatusEngine, validateTruck, TRUCK_FORM_FIELDS } from "./specs/truck.js";
+export { truckSpec, applyTruckStatusEngine, validateTruck, TRUCK_FORM_FIELDS, ESTIMATOR_NAMES } from "./specs/truck.js";
 import type { IntakeSpec } from "./types.js";
 /** Look up a unit-type spec by name ("truck" | "trailer"). Returns null for anything else, so
  *  a caller can reject an unknown/injected type before touching the DB. */

@@ -10,7 +10,7 @@ export { createUnit, updateUnit, findDuplicates, createUnits } from "./pipeline.
 export { resolveCustomerRef, resolveContactRef } from "./customer.js";
 
 export { trailerSpec, applyTrailerStatusEngine, validateTrailer, TRAILER_FORM_FIELDS } from "./specs/trailer.js";
-export { truckSpec, applyTruckStatusEngine, validateTruck, TRUCK_FORM_FIELDS } from "./specs/truck.js";
+export { truckSpec, applyTruckStatusEngine, validateTruck, TRUCK_FORM_FIELDS, ESTIMATOR_NAMES } from "./specs/truck.js";
 
 import { truckSpec } from "./specs/truck.js";
 import { trailerSpec } from "./specs/trailer.js";
