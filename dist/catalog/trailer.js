@@ -6,11 +6,13 @@
 // swap/tow_drive column. As with truck, the app-specific gate + link/linkEnabled are injected; the schema
 // half is shared. See truck.ts header for why `capability` is required and never defaulted.
 import { str, dateF, dateTzF, numF, money, bool, computed, tzToday, sfDuration } from "./fields.js";
+import { statusField, TRAILER_STATUS_ORDER } from "./status-order.js";
 /** The trailer object's field table (schema-coupled; identical across apps). */
 export const trailerFields = [
     // Identity
     str("sf_name", "Unit #", "identity"),
-    str("status", "Status", "status"),
+    // Pipeline-order sort (sortExpr ranks by TRAILER_STATUS_ORDER) — a sort on "status" orders by stage, not A→Z.
+    statusField("trailer", TRAILER_STATUS_ORDER),
     str("team", "Team", "identity"),
     str("sales_team", "Sales team", "identity"),
     // Status / lifecycle dates
@@ -97,6 +99,10 @@ export const trailerFields = [
     computed("number", "days_in_status", "Days in status", "status", `${tzToday} - trailer.status_date`),
     // NULL unless invoiced-and-unpaid (invoice_date set, invoice_paid_date null) — exactly the old bespoke SQL.
     computed("number", "days_past_due", "Days past due", "status", `CASE WHEN trailer.invoice_date IS NOT NULL AND trailer.invoice_paid_date IS NULL THEN ${tzToday} - trailer.invoice_date END`),
+    // Days since the REPAIR GOAL (Matt's "estimated completion date"); NULL when there's no goal, positive =
+    // overdue. Backs the redefined "Past Due" list view (repairs-not-complete past the goal — Matt 2026-10-21),
+    // filtered as gte 0 alongside repair_completion_date IS NULL. filterable; NOT summable (a now()-based count).
+    computed("number", "days_past_goal", "Days past repair goal", "status", `${tzToday} - trailer.repair_goal`),
     // Turn-time durations (#26 Ship 3). Reproduce the SF FORMULA fields verbatim (FCR_Collision_Trailer__c
     // describe): `IF(ISBLANK(end), TODAY() - start, end - start)` → elapsed-so-far when the end date is missing,
     // else the completed span (see sfDuration). These are OPEN-INCLUSIVE (a still-open trailer contributes its

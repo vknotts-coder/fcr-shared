@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { truckObject, truckFields } from "./truck.js";
 import { trailerObject, trailerFields } from "./trailer.js";
 import { LIST_VIEWS, getListView, listViewsForObject, resolveSort, resolveStatus, listViewDefinition } from "./listviews.js";
+import { statusRankExpr, TRAILER_STATUS_ORDER, TRUCK_STATUS_ORDER } from "./status-order.js";
 import { toClientObject } from "../reports/registry-core.js";
 import { validateDefinition } from "../reports/definition.js";
 import type { Principal } from "../contracts/index.js";
@@ -174,8 +175,8 @@ describe("trailer object", () => {
 describe("list views", () => {
   it("has the truck + trailer views", () => {
     expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due"]);
-    expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "wip", "to_invoice", "past_due"]);
-    expect(LIST_VIEWS).toHaveLength(12);
+    expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "stuck_on_parts", "wip", "to_invoice", "past_due"]);
+    expect(LIST_VIEWS).toHaveLength(13);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
   });
 
@@ -202,10 +203,8 @@ describe("list views", () => {
     expect(adef.filterLogic).toContain("OR");
   });
 
-  it("the new trailer preset views build the right static filters (OR'd eq — the engine has no `in`)", () => {
-    const pd = listViewDefinition(getListView("trailer", "past_due")!, getListView("trailer", "past_due")!.defaultSort);
-    expect(pd.filters).toEqual([{ field: "days_past_due", op: "gte", value: "30" }]);
-
+  it("the trailer preset views build the right static filters (OR'd eq / AND'd neq — the engine has no `in`)", () => {
+    // to_invoice unchanged: status ∈ terminal AND invoice_1 IS NULL.
     const ti = getListView("trailer", "to_invoice")!;
     const tidef = listViewDefinition(ti, ti.defaultSort);
     expect(tidef.filters).toEqual([
@@ -216,14 +215,37 @@ describe("list views", () => {
     ]);
     expect(tidef.filterLogic).toBe("(1 OR 2 OR 3) AND 4");
 
+    // Scheduling (Matt 2026-10-21): estimate approved AND all parts received AND status not past repair.
     const sc = getListView("trailer", "scheduling")!;
     const scdef = listViewDefinition(sc, sc.defaultSort);
-    expect(scdef.filters).toEqual([
-      { field: "status", op: "eq", value: "Approved" },
-      { field: "status", op: "eq", value: "Awaiting Parts" },
-      { field: "status", op: "eq", value: "Parts Received" },
+    expect(scdef.filters.slice(0, 2)).toEqual([
+      { field: "estimate_approved_date", op: "notNull" },
+      { field: "all_parts_received_date_stamped", op: "notNull" },
     ]);
-    expect(scdef.filterLogic).toBe("(1 OR 2 OR 3)");
+    // the remaining filters exclude the post-repair statuses (9 AND'd neq on status)
+    expect(scdef.filters.slice(2)).toEqual([
+      "Repair Complete", "Awaiting Delivery Info", "Awaiting Delivery", "Awaiting Customer Pickup",
+      "Delivery Dispatch", "Delivered", "Total Loss", "Do Not Repair", "REWORK",
+    ].map((value) => ({ field: "status", op: "neq", value })));
+    expect(scdef.filterLogic).toBe("1 AND 2 AND (3 AND 4 AND 5 AND 6 AND 7 AND 8 AND 9 AND 10 AND 11)");
+
+    // Stuck on Parts (Matt 2026-10-21): in "Awaiting Parts" status for 20+ days.
+    const sp = getListView("trailer", "stuck_on_parts")!;
+    const spdef = listViewDefinition(sp, sp.defaultSort);
+    expect(spdef.filters).toEqual([
+      { field: "status", op: "eq", value: "Awaiting Parts" },
+      { field: "days_in_status", op: "gte", value: "20" },
+    ]);
+    expect(spdef.filterLogic).toBe("1 AND 2");
+
+    // Past Due (Matt 2026-10-21): REDEFINED — repairs not complete AND past the repair goal (not AR aging).
+    const pd = listViewDefinition(getListView("trailer", "past_due")!, getListView("trailer", "past_due")!.defaultSort);
+    expect(pd.filters.slice(0, 2)).toEqual([
+      { field: "days_past_goal", op: "gte", value: "0" },
+      { field: "repair_completion_date", op: "isNull" },
+    ]);
+    expect(pd.sort).toEqual({ field: "days_past_goal", dir: "desc" });
+    expect(pd.filterLogic).toBe("1 AND 2 AND (3 AND 4 AND 5 AND 6 AND 7 AND 8 AND 9 AND 10 AND 11)");
   });
 
   // The contract that actually matters: every list view's definition must VALIDATE for a viewer (offered
@@ -242,5 +264,35 @@ describe("list views", () => {
         expect(res.ok, `${view.object}/${view.slug} (status=${status ?? "active"}): ${res.ok ? "" : res.errors.join("; ")}`).toBe(true);
       }
     }
+  });
+});
+
+describe("status pipeline-order sort (#1)", () => {
+  it("the trailer/truck status field carries a pipeline-rank sortExpr (ranks by the SF flow, not A→Z)", () => {
+    const trailerStatus = trailerFields.find((f) => f.key === "status")!;
+    expect(trailerStatus.sortExpr).toBe(statusRankExpr("trailer", TRAILER_STATUS_ORDER));
+    // ranks by pipeline position: first stage → 0, an unlisted/NULL status → last (order.length)
+    expect(trailerStatus.sortExpr).toContain(`CASE "trailer"."status" WHEN 'Awaiting Pickup Info' THEN 0`);
+    expect(trailerStatus.sortExpr).toContain(`ELSE ${TRAILER_STATUS_ORDER.length} END`);
+
+    const truckStatus = truckFields.find((f) => f.key === "status")!;
+    expect(truckStatus.sortExpr).toBe(statusRankExpr("truck", TRUCK_STATUS_ORDER));
+    // per-object order: trailer's rank for "Parts Received" has no truck equivalent → the exprs differ
+    expect(truckStatus.sortExpr).not.toBe(trailerStatus.sortExpr);
+  });
+
+  it("the status field is otherwise identical to a plain str field (only ORDER BY differs)", () => {
+    const trailerStatus = trailerFields.find((f) => f.key === "status")!;
+    expect(trailerStatus.path).toBe("status");
+    expect(trailerStatus.type).toBe("string");
+    expect(trailerStatus.filterable).toBe(true);
+    expect(trailerStatus.summable).toBe(false);
+  });
+
+  it("the status dropdown options ARE the shared pipeline-order arrays (single source of truth)", () => {
+    // listviews imports TRAILER_STATUS_ORDER/TRUCK_STATUS_ORDER as its dropdown options, so the options and
+    // the sort rank can't drift. Verify the trailer "Trailers" view's statusSelect uses the same array.
+    const trailersView = getListView("trailer", "trailers")!;
+    expect(trailersView.statusSelect?.options).toEqual(TRAILER_STATUS_ORDER);
   });
 });

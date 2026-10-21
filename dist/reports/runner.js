@@ -226,8 +226,10 @@ export function buildTabularQuery(obj, def, fieldsByKey, principal, rowCap = REP
     let orderBy = "";
     if (def.sort) {
         const meta = fieldsByKey.get(def.sort.field);
+        // A field may carry a `sortExpr` (trusted registry SQL) to order by a domain order rather than its own
+        // column/expr — e.g. `status` sorts by SF pipeline stage, not alphabetically (status-order.ts).
         if (meta)
-            orderBy = ` ORDER BY ${fieldExpr(obj, meta)} ${def.sort.dir === "desc" ? "DESC" : "ASC"}`;
+            orderBy = ` ORDER BY ${meta.sortExpr ?? fieldExpr(obj, meta)} ${def.sort.dir === "desc" ? "DESC" : "ASC"}`;
     }
     const sql = `SELECT ${items.join(", ")} FROM ${fromClause(obj)} WHERE ${where.sql}${orderBy} LIMIT ${rowCap + 1}`;
     return { sql, params: where.params };
@@ -375,18 +377,29 @@ function summaryColumns(def, fieldsByKey) {
         return { key: summaryKey(s), label: summaryLabel(s.agg, meta?.label), type, numeric: true };
     });
 }
-export function sortSummaryRows(rows, columns, sort, groupKey) {
+export function sortSummaryRows(rows, columns, sort, groupKey, groupOrder) {
     const dir = sort?.dir === "desc" ? -1 : 1;
+    // A domain-ordered group field (e.g. `status`, ranked by SF pipeline stage — status-order.ts carries the
+    // order as the field's `sortOrder`) orders its groups by that order, NOT alphabetically — the grouped-path
+    // counterpart of the tabular `sortExpr`. An unlisted / none group ranks LAST (index = length), matching the
+    // CASE ELSE; equal ranks fall back to localeCompare for stability. #1 ("every list view AND report").
+    const rankByOrder = groupOrder ? (v) => { const i = groupOrder.indexOf(v); return i < 0 ? groupOrder.length : i; } : null;
     // Sort by the group column (validateDefinition accepts group-field as a summary sort). The group key
     // is NOT among `columns` (those are the aggregates), so this must be handled before the aggregate case
     // — otherwise it fell through to an always-ascending default, discarding sort.dir.
     if (sort && groupKey && sort.field === groupKey) {
+        if (rankByOrder)
+            return [...rows].sort((a, b) => (rankByOrder(a.groupValue) - rankByOrder(b.groupValue)) * dir || a.groupValue.localeCompare(b.groupValue));
         return [...rows].sort((a, b) => a.groupValue.localeCompare(b.groupValue) * dir);
     }
     if (sort && columns.some((c) => c.key === sort.field)) {
         const key = sort.field;
         return [...rows].sort((a, b) => ((a.values[key] ?? 0) - (b.values[key] ?? 0)) * dir);
     }
+    // Default order (no explicit sort): a domain-ordered group field defaults to its pipeline order (ascending),
+    // so an un-sorted by-status report still reads in stage order rather than A→Z; otherwise alphabetical.
+    if (rankByOrder)
+        return [...rows].sort((a, b) => (rankByOrder(a.groupValue) - rankByOrder(b.groupValue)) || a.groupValue.localeCompare(b.groupValue));
     return [...rows].sort((a, b) => a.groupValue.localeCompare(b.groupValue));
 }
 /** Read a DB aggregate row (a GROUP BY row or the grand-total row) into summaryKey → value. sum over no
@@ -424,7 +437,7 @@ function buildSummaryResult(obj, def, fieldsByKey, groupedRows, totalRow) {
         object: obj.key,
         group: { key: groupMeta?.key ?? "", label: groupMeta?.label ?? "", ...(bucket ? { bucket } : {}) },
         columns,
-        rows: sortSummaryRows(rows, columns, def.sort, groupMeta?.key),
+        rows: sortSummaryRows(rows, columns, def.sort, groupMeta?.key, groupMeta?.sortOrder),
         total: totalRow ? readAgg(totalRow, def) : {},
         rowCount: rows.length,
         truncated: false,

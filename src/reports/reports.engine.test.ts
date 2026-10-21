@@ -10,6 +10,7 @@ import {
   toClientObject,
   validateReport,
   buildTabularQuery,
+  sortSummaryRows,
   runReport,
   REPORT_ROW_CAP,
   EXPORT_ROW_CAP,
@@ -106,6 +107,52 @@ describe("computed (expr) fields (#107 Slice A)", () => {
     const broken: RegistryObject = { ...gadget, fields: [oops] };
     const fieldsByKey = new Map(broken.fields.map((f) => [f.key, f] as [string, RegistryField]));
     expect(() => buildTabularQuery(broken, { object: "gadget", columns: ["oops"], filters: [], summaries: [], filterLogic: null, groupBy: null, sort: null } as never, fieldsByKey, admin)).toThrow(/neither path nor expr/);
+  });
+});
+
+describe("sortExpr — ORDER BY override (status pipeline-order sort, #1)", () => {
+  // A field with a sortExpr: SELECT/WHERE use the column; ORDER BY uses the override (a domain rank).
+  const ranked: RegistryObject = {
+    key: "ranked",
+    label: "Ranked",
+    table: "app.ranked",
+    baseWhere: "deleted_at IS NULL",
+    capability: () => true,
+    fields: [
+      { key: "name", label: "Name", type: "string", section: "identity", path: "name", filterable: true, groupable: true, summable: false },
+      {
+        key: "status", label: "Status", type: "string", section: "identity", path: "status",
+        filterable: true, groupable: true, summable: false,
+        sortExpr: `CASE "ranked"."status" WHEN 'open' THEN 0 WHEN 'closed' THEN 1 ELSE 2 END`,
+      },
+    ],
+  };
+  const rcat: RegistryObject[] = [ranked];
+  const build = (def: object) => {
+    const v = validateReport(def, admin, rcat);
+    expect(v.ok).toBe(true);
+    if (!v.ok) throw new Error(v.errors.join("; "));
+    const fieldsByKey = new Map(v.obj.fields.map((f) => [f.key, f] as [string, RegistryField]));
+    return buildTabularQuery(v.obj, v.def, fieldsByKey, admin);
+  };
+
+  it("ORDER BY uses the sortExpr (domain rank), not the bare column", () => {
+    const q = build({ object: "ranked", columns: ["name", "status"], filters: [], sort: { field: "status", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`ORDER BY CASE "ranked"."status" WHEN 'open' THEN 0 WHEN 'closed' THEN 1 ELSE 2 END ASC`);
+    // the bare-column ORDER BY (the old alphabetical behavior) is gone
+    expect(q.sql).not.toMatch(/ORDER BY "ranked"\."status" (ASC|DESC)/);
+  });
+
+  it("SELECT and WHERE still use the column, never the sortExpr", () => {
+    const q = build({ object: "ranked", columns: ["status"], filters: [{ field: "status", op: "eq", value: "open" }], sort: { field: "status", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`"ranked"."status" AS "status"`); // SELECT = column
+    expect(q.sql).toContain(`"ranked"."status" = $1`); // WHERE = column
+    expect(q.params).toEqual(["open"]);
+  });
+
+  it("a field WITHOUT a sortExpr still orders by its column (unchanged)", () => {
+    const q = build({ object: "ranked", columns: ["name", "status"], filters: [], sort: { field: "name", dir: "asc" }, summaries: [] });
+    expect(q.sql).toContain(`ORDER BY "ranked"."name" ASC`);
   });
 });
 
@@ -272,5 +319,37 @@ describe("row cap seam — on-screen default vs the higher CSV export cap", () =
     if (!out.ok || out.result.mode !== "tabular") throw new Error("expected tabular");
     expect(out.result.truncated).toBe(true);
     expect(out.result.rows.length).toBe(EXPORT_ROW_CAP);
+  });
+});
+
+describe("sortSummaryRows — grouped/summary pipeline order (sortOrder, #1)", () => {
+  const PIPELINE = ["Awaiting Approval", "Approved", "Awaiting Parts", "Parts Received", "Repair in Progress"];
+  // DB returns grouped rows unordered; here deliberately scrambled + an unlisted group.
+  const rows = [
+    { groupValue: "Repair in Progress", values: {} },
+    { groupValue: "Approved", values: {} },
+    { groupValue: "ZZ Legacy", values: {} }, // unlisted → ranks last
+    { groupValue: "Awaiting Approval", values: {} },
+    { groupValue: "Awaiting Parts", values: {} },
+  ] as Parameters<typeof sortSummaryRows>[0];
+
+  it("orders groups by pipeline order (asc) when sorted by the group field", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "asc" }, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["Awaiting Approval", "Approved", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
+  });
+
+  it("respects desc (reverse pipeline order, unlisted still grouped by rank)", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "desc" }, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["ZZ Legacy", "Repair in Progress", "Awaiting Parts", "Approved", "Awaiting Approval"]);
+  });
+
+  it("DEFAULTS an un-sorted grouped-by-status report to pipeline order (not A→Z)", () => {
+    const got = sortSummaryRows(rows, [], null, "status", PIPELINE).map((r) => r.groupValue);
+    expect(got).toEqual(["Awaiting Approval", "Approved", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
+  });
+
+  it("without a sortOrder, falls back to alphabetical (unchanged legacy behavior)", () => {
+    const got = sortSummaryRows(rows, [], { field: "status", dir: "asc" }, "status").map((r) => r.groupValue);
+    expect(got).toEqual(["Approved", "Awaiting Approval", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
   });
 });

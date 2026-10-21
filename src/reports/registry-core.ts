@@ -28,6 +28,19 @@ type RegistryFieldWiring = ReportFieldMeta & {
    *  truncates it to the America/Chicago calendar date for day-granular filtering/grouping/rendering,
    *  so an evening-local record isn't bucketed a day late. Omit for real `date` values (no-op). */
   dateTz?: boolean;
+  /** Optional ORDER BY override: when sorting a tabular report by THIS field, the runner uses this raw SQL
+   *  expression instead of the field's column/`expr`. Used to sort a categorical column by a domain order
+   *  rather than lexically — e.g. the `status` field ranks by SF pipeline stage (see catalog/status-order).
+   *  ⚠ TRUSTED SQL, registry-authored ONLY (same boundary as `expr`/`join.sql`): emitted verbatim, NEVER
+   *  assembled from user input. Qualify columns with the object's table alias (its key). SELECT/WHERE/GROUP
+   *  are unaffected — this changes ordering only. */
+  sortExpr?: string;
+  /** The JS-side counterpart of `sortExpr` for the GROUPED/summary path, which orders group rows in JS (no
+   *  SQL ORDER BY) — the ordered domain values. When a summary is grouped by this field, `sortSummaryRows`
+   *  ranks each group by its index here (unlisted/none → last, mirroring the `sortExpr` CASE ELSE) instead of
+   *  alphabetically, so a by-status count follows SF pipeline order too. Set it from the SAME array that built
+   *  `sortExpr` so the tabular and grouped paths can't disagree. Omit for a field with no domain order. */
+  sortOrder?: readonly string[];
 };
 
 /**

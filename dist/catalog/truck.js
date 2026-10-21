@@ -9,11 +9,13 @@
 // Column paths verified against fcr-dispatch db/fcr_core.schema.sql (2026-09-03). Money/mileage columns are
 // stored as SF-synced text on some rows; the runner casts numeric/money aggregates (SUM/AVG) explicitly.
 import { str, dateF, dateTzF, numF, money, computed, tzToday, sfDuration } from "./fields.js";
+import { statusField, TRUCK_STATUS_ORDER } from "./status-order.js";
 /** The truck object's field table (schema-coupled; identical across apps). */
 export const truckFields = [
     // Identity
     str("sf_name", "Unit #", "identity"),
-    str("status", "Status", "status"),
+    // Pipeline-order sort (sortExpr ranks by TRUCK_STATUS_ORDER) — a sort on "status" orders by stage, not A→Z.
+    statusField("truck", TRUCK_STATUS_ORDER),
     str("shop", "Shop", "identity"),
     str("team_leader", "Team leader", "identity"),
     str("estimator_name", "Estimator", "identity"),
