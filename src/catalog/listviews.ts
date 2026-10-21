@@ -94,6 +94,10 @@ const TRAILER_POST_REPAIR = [
   "Repair Complete", "Awaiting Delivery Info", "Awaiting Delivery", "Awaiting Customer Pickup",
   "Delivery Dispatch", "Delivered", "Total Loss", "Do Not Repair", "REWORK",
 ];
+// Built ONCE and reused by both views below (Scheduling + Past Due). Both place these status-excludes after
+// exactly TWO fixed filters, so they start at 1-based filter index 3 — keep that invariant if you add a fixed
+// filter to either view. (Avoids re-evaluating statusNoneOf twice per view for .filters and .logic.)
+const TRAILER_POST_REPAIR_EXCL = statusNoneOf(TRAILER_POST_REPAIR, 3);
 
 // ── The catalog ───────────────────────────────────────────────────────────────────────────────────
 
@@ -208,8 +212,8 @@ const TRAILER_VIEWS: ListView[] = [
     description: "Estimate approved and all parts received, not yet past repair — the ready-to-schedule queue.",
     columns: TRAILER_PIPELINE_COLS,
     defaultSort: sort("days_in_status", "desc"),
-    filters: [notNull("estimate_approved_date"), notNull("all_parts_received_date_stamped"), ...statusNoneOf(TRAILER_POST_REPAIR, 3).filters],
-    filterLogic: `1 AND 2 AND ${statusNoneOf(TRAILER_POST_REPAIR, 3).logic}`,
+    filters: [notNull("estimate_approved_date"), notNull("all_parts_received_date_stamped"), ...TRAILER_POST_REPAIR_EXCL.filters],
+    filterLogic: `1 AND 2 AND ${TRAILER_POST_REPAIR_EXCL.logic}`,
   },
   {
     slug: "stuck_on_parts",
@@ -260,8 +264,8 @@ const TRAILER_VIEWS: ListView[] = [
     description: "Repairs not complete and past the estimated completion date (repair goal).",
     columns: TRAILER_PAST_DUE_COLS,
     defaultSort: sort("days_past_goal", "desc"),
-    filters: [gte("days_past_goal", "0"), isNull("repair_completion_date"), ...statusNoneOf(TRAILER_POST_REPAIR, 3).filters],
-    filterLogic: `1 AND 2 AND ${statusNoneOf(TRAILER_POST_REPAIR, 3).logic}`,
+    filters: [gte("days_past_goal", "0"), isNull("repair_completion_date"), ...TRAILER_POST_REPAIR_EXCL.filters],
+    filterLogic: `1 AND 2 AND ${TRAILER_POST_REPAIR_EXCL.logic}`,
   },
 ];
 
