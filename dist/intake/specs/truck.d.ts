@@ -13,6 +13,7 @@ export declare function applyTruckStatusEngine(before: Record<string, unknown>, 
 }): EngineResult;
 export declare function validateTruck(state: Record<string, unknown>, opts?: {
     isNew?: boolean;
+    before?: Record<string, unknown>;
 }): ValidationError[];
 export declare const truckSpec: IntakeSpec;
 //# sourceMappingURL=truck.d.ts.map

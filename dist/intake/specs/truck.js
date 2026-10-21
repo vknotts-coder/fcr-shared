@@ -84,7 +84,15 @@ export function validateTruck(state, opts = {}) {
     }
     // estimator_name reverse-syncs to the SF Estimator_Name__c RESTRICTED picklist — refuse a value outside the
     // active set so an app write (board assign / record edit) can't dead-letter at SF. Blank is allowed (clears).
-    if (typeof state.estimator_name === "string" && !isBlank(state.estimator_name) && !ESTIMATOR_NAMES.includes(state.estimator_name)) {
+    // ⚠ Scope this to the value actually being SET: updateUnit validates the MERGED before-image, and legacy rows
+    // hold out-of-domain values (the retired estimating runTransition wrote full names like "Jordan"). Only
+    // validating a CHANGED value keeps an unchanged legacy estimator_name from freezing edits to unrelated fields
+    // (there is no DB backstop, unlike VIN's varchar(17)). On create (no before) every value is "changed".
+    const estimatorChanged = !opts.before || state.estimator_name !== opts.before.estimator_name;
+    if (estimatorChanged &&
+        typeof state.estimator_name === "string" &&
+        !isBlank(state.estimator_name) &&
+        !ESTIMATOR_NAMES.includes(state.estimator_name)) {
         errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
     }
     if (status === "Awaiting Pickup" &&

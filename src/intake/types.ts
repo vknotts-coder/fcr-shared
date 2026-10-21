@@ -127,7 +127,7 @@ export interface IntakeSpec {
     opts: { isNew?: boolean; today?: string },
   ) => EngineResult;
   /** Pure validation over the effective after-state. */
-  validate: (state: Record<string, unknown>, opts: { isNew?: boolean }) => ValidationError[];
+  validate: (state: Record<string, unknown>, opts: { isNew?: boolean; before?: Record<string, unknown> }) => ValidationError[];
 }
 
 export type SaveResult =

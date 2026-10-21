@@ -102,6 +102,17 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     // a full name (the retired runTransition wrote these) is REFUSED so it can't dead-letter at SF
     expect(validateTruck({ estimator_name: "Jordan" }, { isNew: false }).some((e) => e.field === "estimator_name")).toBe(true);
   });
+  it("truck: a legacy out-of-domain estimator_name does NOT freeze edits to unrelated fields (scoped to changed)", () => {
+    // updateUnit validates the MERGED before-image. A legacy row holds estimator_name="Jordan"; the user edits
+    // only `shop`. estimator_name is UNCHANGED → the guard must not fire and block the unrelated edit.
+    const before = { estimator_name: "Jordan", status: "Estimating" };
+    const merged = { ...before, shop: "Sparta" }; // estimator_name carried through unchanged
+    expect(validateTruck(merged, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
+    // But actually CHANGING estimator_name to a bad value is still refused...
+    expect(validateTruck({ estimator_name: "Bob" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(true);
+    // ...and changing it to a valid initial passes.
+    expect(validateTruck({ estimator_name: "JR" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
+  });
   it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
     const { db, calls } = fakeDb((text) => {
       if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
