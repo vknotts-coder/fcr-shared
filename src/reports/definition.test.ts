@@ -255,4 +255,9 @@ describe("grandTotals — tabular-footer validation", () => {
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.def.grandTotals).toHaveLength(1);
   });
+
+  it("rejects two grand-totals on the SAME field (a single-row footer shows one total per column)", () => {
+    const r = validateDefinition({ ...base, grandTotals: [{ field: "total_sales", agg: "sum" }, { field: "total_sales", agg: "avg" }] }, OBJ);
+    expect(r.ok).toBe(false);
+  });
 });

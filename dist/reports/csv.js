@@ -50,6 +50,18 @@ export function reportToCsv(result) {
         const cols = result.columns;
         const header = cols.map((c) => c.label);
         const rows = result.rows.map((row) => cols.map((c) => fieldForCsv(row[c.key] ?? null, c.type)));
+        // Grand-total FOOTER (def.grandTotals) — append a "Total" row with each total under its source column,
+        // mirroring the on-screen footer + the summary branch below. The value stays a real number (summable in
+        // Excel). Skip COUNT totals (a row-count has no sensible home in a per-column money/number footer — field
+        // "*" matches nothing anyway, but a crafted count on a real column must not render the count there), and
+        // emit the row only when at least one remaining total maps to a visible column (no bare "Total" row). The
+        // engine forbids >1 grandTotal per field, so each column maps to at most one total. These aggregates are
+        // DB-side + UNCAPPED, so the Total row is EXACT even when the detail rows were truncated at the cap.
+        const footTotals = (result.totals ?? []).filter((t) => t.agg !== "count");
+        const byField = new Map(footTotals.map((t) => [t.field, t]));
+        if (cols.some((c) => byField.has(c.key))) {
+            rows.push(cols.map((c, ci) => (byField.has(c.key) ? byField.get(c.key).value : ci === 0 ? "Total" : "")));
+        }
         csv = toCsv(header, rows);
     }
     else {
