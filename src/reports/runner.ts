@@ -32,12 +32,18 @@ import {
   type ReportDefinition,
   type ReportFilter,
   type ReportSort,
+  type SummaryAgg,
   type DateBucket,
   type LogicNode,
 } from "./definition.js";
 
 export type ReportColumn = { key: string; label: string; type: FieldType; numeric: boolean };
 export type CellValue = string | number | boolean | null;
+
+/** A grand-total footer entry for a tabular report (def.grandTotals): an exact DB-side aggregate over the
+ *  whole scoped set. `field` is the source column key so the UI/CSV can place the value under that column;
+ *  `value` follows readAgg's rules (sum over no rows is 0; avg/min/max with no value is null). */
+export type TabularTotal = { field: string; agg: SummaryAgg; label: string; value: number | null };
 
 export type TabularResult = {
   mode: "tabular";
@@ -50,6 +56,9 @@ export type TabularResult = {
   // The row cap actually applied to THIS run (REPORT_ROW_CAP for the on-screen grid, EXPORT_ROW_CAP for an
   // export). The truncation NOTE quotes it, so a big-cap export can't misreport "the first 5,000 rows".
   rowCap: number;
+  // Grand-total footer (present only when def.grandTotals is non-empty). Detail rows above are UNAFFECTED —
+  // these aggregates are an exact, separate, uncapped DB-side query over the same scoped WHERE.
+  totals?: TabularTotal[];
 };
 
 export type SummaryCell = number | null;
@@ -287,12 +296,11 @@ export function buildTabularQuery(
   fieldsByKey: Map<string, RegistryField>,
   principal: Principal,
   rowCap: number = REPORT_ROW_CAP,
+  where: WhereSql = buildWhere(obj, def, fieldsByKey, principal),
 ): BuiltQuery {
   const cols = def.columns.map((k) => fieldsByKey.get(k)).filter((f): f is RegistryField => !!f);
   const items = cols.map((f) => selectItem(obj, f));
   if (linkActive(obj)) items.push(`${ident(obj.key)}.${ident(obj.link!.path)} AS ${ident("__id")}`);
-
-  const where = buildWhere(obj, def, fieldsByKey, principal);
 
   let orderBy = "";
   if (def.sort) {
@@ -420,6 +428,24 @@ export async function runReport(
       ]);
       return { ok: true, result: buildSummaryResult(obj, def, fieldsByKey, grouped.rows, total.rows[0]) };
     }
+    const gt = def.grandTotals ?? [];
+    if (gt.length > 0) {
+      // Tabular report WITH a grand-total footer: run the capped detail query AND an exact, uncapped total
+      // query (same scoped WHERE, no GROUP BY — reuses the summary grand-total machinery via a shadow def
+      // whose `summaries` are the grandTotals). The detail rows are unaffected by the aggregates. Build the
+      // scoped WHERE ONCE and thread it into both builders (mirrors the summary path above).
+      const where = buildWhere(obj, def, fieldsByKey, principal);
+      const shadow: ReportDefinition = { ...def, summaries: gt };
+      const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap, where);
+      const tq = buildSummaryTotalQuery(obj, shadow, fieldsByKey, principal, where);
+      const [main, tot] = await Promise.all([
+        db.query<Record<string, unknown>>(q.sql, q.params),
+        db.query<Record<string, unknown>>(tq.sql, tq.params),
+      ]);
+      const truncated = main.rows.length > rowCap;
+      const totals = buildTabularTotals(shadow, fieldsByKey, tot.rows[0]);
+      return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? main.rows.slice(0, rowCap) : main.rows, truncated, rowCap, totals) };
+    }
     const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
     const { rows } = await db.query<Record<string, unknown>>(q.sql, q.params);
     const truncated = rows.length > rowCap;
@@ -435,6 +461,21 @@ export async function runReport(
 
 // ── Result shaping ───────────────────────────────────────────────────────────────────────────────
 
+/** Shape the grand-total footer for a tabular report. `shadowDef` is the run's def with its `summaries`
+ *  set to the grandTotals, so readAgg/summaryKey/summaryLabel (all keyed off `summaries`) apply unchanged.
+ *  Carries the SOURCE field on each entry so the renderer/CSV places the value under that column. */
+function buildTabularTotals(
+  shadowDef: ReportDefinition,
+  fieldsByKey: Map<string, RegistryField>,
+  totalRow: Record<string, unknown> | undefined,
+): TabularTotal[] {
+  const vals = totalRow ? readAgg(totalRow, shadowDef) : {};
+  return shadowDef.summaries.map((s) => {
+    const meta = s.agg === "count" ? undefined : fieldsByKey.get(s.field);
+    return { field: s.field, agg: s.agg, label: summaryLabel(s.agg, meta?.label), value: vals[summaryKey(s)] ?? null };
+  });
+}
+
 function buildTabular(
   obj: RegistryObject,
   def: ReportDefinition,
@@ -442,6 +483,7 @@ function buildTabular(
   rows: Record<string, unknown>[],
   truncated: boolean,
   rowCap: number,
+  totals?: TabularTotal[],
 ): TabularResult {
   const columns: ReportColumn[] = def.columns
     .map((k) => fieldsByKey.get(k))
@@ -462,7 +504,7 @@ function buildTabular(
       hrefs.push(null);
     }
   }
-  return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap };
+  return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap, ...(totals && totals.length ? { totals } : {}) };
 }
 
 function summaryLabel(agg: string, fieldLabel: string | undefined): string {

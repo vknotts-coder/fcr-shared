@@ -219,3 +219,40 @@ describe("isNumericType — single source of truth (#103 defect 3)", () => {
     for (const t of ["string", "date", "boolean", "enum"] as const) expect(isNumericType(t)).toBe(false);
   });
 });
+
+describe("grandTotals — tabular-footer validation", () => {
+  it("accepts a summable field that is also a selected column (tabular mode)", () => {
+    const r = validateDefinition({ ...base, grandTotals: [{ field: "total_sales", agg: "sum" }] }, OBJ);
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a count grand-total (no field needed)", () => {
+    const r = validateDefinition({ ...base, grandTotals: [{ field: "*", agg: "count" }] }, OBJ);
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects a grand-total over a non-summable field", () => {
+    const r = validateDefinition({ ...base, grandTotals: [{ field: "sf_name", agg: "sum" }] }, OBJ);
+    expect(r.ok).toBe(false);
+  });
+
+  it("rejects a grand-total field that is not a selected column (footer must sit under a visible column)", () => {
+    // total_sales is summable but NOT in these columns → rejected.
+    const r = validateDefinition({ object: "truck", columns: ["sf_name"], filters: [], summaries: [], grandTotals: [{ field: "total_sales", agg: "sum" }] }, OBJ);
+    expect(r.ok).toBe(false);
+  });
+
+  it("rejects grandTotals in summary mode (a grouped report totals via its summaries)", () => {
+    const r = validateDefinition(
+      { object: "truck", columns: [], filters: [], groupBy: { field: "status" }, summaries: [{ field: "*", agg: "count" }], grandTotals: [{ field: "total_sales", agg: "sum" }] },
+      OBJ,
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("dedupes identical grand-totals to one footer cell", () => {
+    const r = validateDefinition({ ...base, grandTotals: [{ field: "total_sales", agg: "sum" }, { field: "total_sales", agg: "sum" }] }, OBJ);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.def.grandTotals).toHaveLength(1);
+  });
+});

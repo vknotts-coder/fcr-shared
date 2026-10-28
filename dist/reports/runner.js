@@ -217,12 +217,11 @@ function selectItem(obj, field) {
 /** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests.
  *  `rowCap` is the LIMIT the runner enforces — the on-screen grid passes REPORT_ROW_CAP (the default), the
  *  CSV export path passes EXPORT_ROW_CAP; the `+ 1` probe detects "there are more" for either. */
-export function buildTabularQuery(obj, def, fieldsByKey, principal, rowCap = REPORT_ROW_CAP) {
+export function buildTabularQuery(obj, def, fieldsByKey, principal, rowCap = REPORT_ROW_CAP, where = buildWhere(obj, def, fieldsByKey, principal)) {
     const cols = def.columns.map((k) => fieldsByKey.get(k)).filter((f) => !!f);
     const items = cols.map((f) => selectItem(obj, f));
     if (linkActive(obj))
         items.push(`${ident(obj.key)}.${ident(obj.link.path)} AS ${ident("__id")}`);
-    const where = buildWhere(obj, def, fieldsByKey, principal);
     let orderBy = "";
     if (def.sort) {
         const meta = fieldsByKey.get(def.sort.field);
@@ -326,6 +325,24 @@ export async function runReport(raw, principal, db, catalog, opts) {
             ]);
             return { ok: true, result: buildSummaryResult(obj, def, fieldsByKey, grouped.rows, total.rows[0]) };
         }
+        const gt = def.grandTotals ?? [];
+        if (gt.length > 0) {
+            // Tabular report WITH a grand-total footer: run the capped detail query AND an exact, uncapped total
+            // query (same scoped WHERE, no GROUP BY — reuses the summary grand-total machinery via a shadow def
+            // whose `summaries` are the grandTotals). The detail rows are unaffected by the aggregates. Build the
+            // scoped WHERE ONCE and thread it into both builders (mirrors the summary path above).
+            const where = buildWhere(obj, def, fieldsByKey, principal);
+            const shadow = { ...def, summaries: gt };
+            const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap, where);
+            const tq = buildSummaryTotalQuery(obj, shadow, fieldsByKey, principal, where);
+            const [main, tot] = await Promise.all([
+                db.query(q.sql, q.params),
+                db.query(tq.sql, tq.params),
+            ]);
+            const truncated = main.rows.length > rowCap;
+            const totals = buildTabularTotals(shadow, fieldsByKey, tot.rows[0]);
+            return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? main.rows.slice(0, rowCap) : main.rows, truncated, rowCap, totals) };
+        }
         const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
         const { rows } = await db.query(q.sql, q.params);
         const truncated = rows.length > rowCap;
@@ -340,7 +357,17 @@ export async function runReport(raw, principal, db, catalog, opts) {
     }
 }
 // ── Result shaping ───────────────────────────────────────────────────────────────────────────────
-function buildTabular(obj, def, fieldsByKey, rows, truncated, rowCap) {
+/** Shape the grand-total footer for a tabular report. `shadowDef` is the run's def with its `summaries`
+ *  set to the grandTotals, so readAgg/summaryKey/summaryLabel (all keyed off `summaries`) apply unchanged.
+ *  Carries the SOURCE field on each entry so the renderer/CSV places the value under that column. */
+function buildTabularTotals(shadowDef, fieldsByKey, totalRow) {
+    const vals = totalRow ? readAgg(totalRow, shadowDef) : {};
+    return shadowDef.summaries.map((s) => {
+        const meta = s.agg === "count" ? undefined : fieldsByKey.get(s.field);
+        return { field: s.field, agg: s.agg, label: summaryLabel(s.agg, meta?.label), value: vals[summaryKey(s)] ?? null };
+    });
+}
+function buildTabular(obj, def, fieldsByKey, rows, truncated, rowCap, totals) {
     const columns = def.columns
         .map((k) => fieldsByKey.get(k))
         .filter((f) => !!f)
@@ -361,7 +388,7 @@ function buildTabular(obj, def, fieldsByKey, rows, truncated, rowCap) {
             hrefs.push(null);
         }
     }
-    return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap };
+    return { mode: "tabular", object: obj.key, columns, rows: out, hrefs, rowCount: out.length, truncated, rowCap, ...(totals && totals.length ? { totals } : {}) };
 }
 function summaryLabel(agg, fieldLabel) {
     if (agg === "count")
