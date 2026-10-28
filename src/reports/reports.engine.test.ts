@@ -16,7 +16,9 @@ import {
   EXPORT_ROW_CAP,
   type RegistryObject,
   type RegistryField,
+  type TabularResult,
 } from "./index.js";
+import { summaryKey } from "./definition.js";
 import type { Queryable } from "../rbac/index.js";
 
 const widget: RegistryObject = {
@@ -351,5 +353,59 @@ describe("sortSummaryRows — grouped/summary pipeline order (sortOrder, #1)", (
   it("without a sortOrder, falls back to alphabetical (unchanged legacy behavior)", () => {
     const got = sortSummaryRows(rows, [], { field: "status", dir: "asc" }, "status").map((r) => r.groupValue);
     expect(got).toEqual(["Approved", "Awaiting Approval", "Awaiting Parts", "Repair in Progress", "ZZ Legacy"]);
+  });
+});
+
+describe("grandTotals — tabular footer (detail rows kept + an exact DB-side total)", () => {
+  const def = {
+    object: "widget",
+    columns: ["name", "cost"],
+    filters: [],
+    summaries: [],
+    grandTotals: [{ field: "cost", agg: "sum" as const }],
+  };
+  const detailRows = [{ name: "a", cost: "10" }, { name: "b", cost: "15" }];
+  // The tabular (detail) query carries LIMIT; the grand-total query is a bare aggregate (no LIMIT). Branch on
+  // that so the fake returns the detail rows for one and the single total row for the other.
+  const totalKey = summaryKey({ field: "cost", agg: "sum" });
+  const db: Queryable = {
+    query: async <T = unknown>(sql: string) =>
+      (/\bLIMIT\b/i.test(sql)
+        ? { rows: detailRows as T[] }
+        : { rows: [{ [totalKey]: "25" }] as T[] }),
+  };
+
+  it("returns the detail rows AND a totals footer (does not collapse to aggregate mode)", async () => {
+    const out = await runReport(def, admin, db, catalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.result.mode).toBe("tabular");
+    const r = out.result as TabularResult;
+    expect(r.rows.length).toBe(2); // detail rows preserved
+    expect(r.rowCount).toBe(2);
+    expect(r.totals).toEqual([{ field: "cost", agg: "sum", label: "Sum of Cost", value: 25 }]);
+  });
+
+  it("no grandTotals ⇒ no totals and a SINGLE query (unchanged tabular path)", async () => {
+    let calls = 0;
+    const db1: Queryable = {
+      query: async <T = unknown>() => {
+        calls++;
+        return { rows: detailRows as T[] };
+      },
+    };
+    const out = await runReport({ ...def, grandTotals: [] }, admin, db1, catalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).totals).toBeUndefined();
+    expect(calls).toBe(1); // only the detail query ran
+  });
+
+  it("drops the whole footer field for a viewer without the financials grant (sensitive derive)", () => {
+    // `cost` is sensitive; a nobody principal's client object must not even offer it, so a grandTotal over it
+    // is unrunnable for them — the app's runCanned degrades by pruning it (covered in the app suite). Here we
+    // just assert the field floor hides it, which is what that pruning keys off.
+    const client = toClientObject(widget, nobody);
+    expect(client.fields.some((f) => f.key === "cost")).toBe(false);
   });
 });

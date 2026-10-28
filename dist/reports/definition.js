@@ -141,7 +141,7 @@ function parseRawDefinition(raw) {
     const errors = [];
     if (!isObject(raw))
         return { ok: false, errors: ["definition must be an object"] };
-    rejectUnknownKeys(raw, ["object", "columns", "filters", "filterLogic", "groupBy", "summaries", "sort"], "definition", errors);
+    rejectUnknownKeys(raw, ["object", "columns", "filters", "filterLogic", "groupBy", "summaries", "grandTotals", "sort"], "definition", errors);
     if (!isNonEmptyString(raw.object))
         errors.push("object: required non-empty string");
     const columns = [];
@@ -252,6 +252,32 @@ function parseRawDefinition(raw) {
             });
         }
     }
+    // grandTotals: same shape as summaries (tabular-footer aggregates). Capped by MAX_SUMMARIES.
+    const grandTotals = [];
+    if (raw.grandTotals !== undefined) {
+        if (!Array.isArray(raw.grandTotals)) {
+            errors.push("grandTotals: must be an array");
+        }
+        else if (raw.grandTotals.length > MAX_SUMMARIES) {
+            errors.push(`grandTotals: at most ${MAX_SUMMARIES}`);
+        }
+        else {
+            raw.grandTotals.forEach((s, idx) => {
+                if (!isObject(s)) {
+                    errors.push(`grandTotals[${idx}]: must be an object`);
+                    return;
+                }
+                rejectUnknownKeys(s, ["field", "agg"], `grandTotals[${idx}]`, errors);
+                const aggOk = s.agg === "sum" || s.agg === "avg" || s.agg === "count" || s.agg === "min" || s.agg === "max";
+                if (!isNonEmptyString(s.field))
+                    errors.push(`grandTotals[${idx}].field: required non-empty string`);
+                if (!aggOk)
+                    errors.push(`grandTotals[${idx}].agg: must be sum|avg|count|min|max`);
+                if (isNonEmptyString(s.field) && aggOk)
+                    grandTotals.push({ field: s.field, agg: s.agg });
+            });
+        }
+    }
     let sort;
     if (raw.sort !== undefined && raw.sort !== null) {
         if (!isObject(raw.sort)) {
@@ -282,6 +308,7 @@ function parseRawDefinition(raw) {
             filterLogic,
             groupBy,
             summaries,
+            grandTotals,
             sort,
         },
     };
@@ -410,6 +437,26 @@ export function validateDefinition(raw, obj) {
         if (!meta.summable)
             errors.push(`${s.agg} needs a numeric field: ${s.field}`);
     }
+    // grandTotals: a TABULAR-only footer (detail rows kept + an exact DB-side total). Reject in summary mode —
+    // a grouped report totals through its summaries, not here. Each non-count field must exist, be summable,
+    // and be a SELECTED column so the footer value sits under a visible column.
+    const grandTotals = d.grandTotals ?? [];
+    if (grandTotals.length > 0 && isSummary) {
+        errors.push("grandTotals is for tabular reports; a grouped (summary) report totals via its summaries");
+    }
+    for (const s of grandTotals) {
+        if (s.agg === "count")
+            continue; // a footer row-count needs no field
+        const meta = field(s.field);
+        if (!meta) {
+            errors.push(`unknown grandTotal field: ${s.field}`);
+            continue;
+        }
+        if (!meta.summable)
+            errors.push(`grandTotal ${s.agg} needs a numeric field: ${s.field}`);
+        else if (!d.columns.includes(s.field))
+            errors.push(`grandTotal field must be a selected column: ${s.field}`);
+    }
     // Sort: field exists. In tabular it must be a selected column; in summary it may be the group or a
     // summary key (validated loosely — the runner sorts what it has).
     if (d.sort) {
@@ -441,6 +488,7 @@ export function validateDefinition(raw, obj) {
             filterLogic: logic || null,
             groupBy: d.groupBy ?? null,
             summaries: dedupeBy(d.summaries, summaryKey), // dedupe — two identical aggregates collapse to one column
+            grandTotals: dedupeBy(grandTotals, summaryKey), // same dedupe as summaries (one footer cell per field+agg)
             sort: d.sort ?? null,
         },
     };

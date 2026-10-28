@@ -1,7 +1,7 @@
 import type { Queryable } from "../rbac/index.js";
 import type { Principal } from "../contracts/index.js";
 import { type RegistryField, type RegistryObject } from "./registry-core.js";
-import { type FieldType, type ReportDefinition, type ReportSort, type DateBucket } from "./definition.js";
+import { type FieldType, type ReportDefinition, type ReportSort, type SummaryAgg, type DateBucket } from "./definition.js";
 export type ReportColumn = {
     key: string;
     label: string;
@@ -9,6 +9,15 @@ export type ReportColumn = {
     numeric: boolean;
 };
 export type CellValue = string | number | boolean | null;
+/** A grand-total footer entry for a tabular report (def.grandTotals): an exact DB-side aggregate over the
+ *  whole scoped set. `field` is the source column key so the UI/CSV can place the value under that column;
+ *  `value` follows readAgg's rules (sum over no rows is 0; avg/min/max with no value is null). */
+export type TabularTotal = {
+    field: string;
+    agg: SummaryAgg;
+    label: string;
+    value: number | null;
+};
 export type TabularResult = {
     mode: "tabular";
     object: string;
@@ -18,6 +27,7 @@ export type TabularResult = {
     rowCount: number;
     truncated: boolean;
     rowCap: number;
+    totals?: TabularTotal[];
 };
 export type SummaryCell = number | null;
 export type SummaryRow = {

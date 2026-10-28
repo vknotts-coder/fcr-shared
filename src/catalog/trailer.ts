@@ -45,6 +45,23 @@ export const trailerFields: RegistryField[] = [
   // Financials (sensitive — gated per-field by can('view', <obj>, {section:'financials', field}))
   money("total_repair_cost", "Total repair cost", "financials"),
   money("labor_amount", "Labor amount", "financials"),
+  // Finished amount — reproduces SF's `WIP_Finished_2__c` currency FORMULA (label "WIP/Finished"): the
+  // earned value of a work-in-progress repair = completion% × labor, but ONLY for a WIP row (not invoiced,
+  // not total loss, AND repair started or in a WIP status), else NULL. Verified live against the SF org
+  // 2026-10-28: (a) SF Percent fields scale by /100 inside formulas, and the synced `completetion_percentage`
+  // holds the raw 0–100 value → divide by 100.0; (b) SF's formula treats a blank factor as 0 → COALESCE(…,0),
+  // so a WIP row missing labor/% reads $0 (matching SF), not NULL. `status IS DISTINCT FROM` so a NULL status
+  // still counts as "not Total Loss" (SF ISPICKVAL on blank = false → NOT = true). DERIVED FROM labor_amount,
+  // so it is itself SENSITIVE/financial — gated per-viewer exactly like labor_amount (never shipped without
+  // the financials grant). summable so the WIP report can foot a grand-total SUM of it.
+  computed(
+    "money",
+    "wip_finished",
+    "Finished amount",
+    "financials",
+    `CASE WHEN trailer.invoice_date IS NULL AND trailer.status IS DISTINCT FROM 'Total Loss' AND (trailer.repair_start_date IS NOT NULL OR trailer.status IN ('Repair in Progress', 'Repair Complete', 'Awaiting Delivery Info', 'Awaiting Delivery', 'Delivered')) THEN COALESCE(trailer.completetion_percentage, 0) / 100.0 * COALESCE(trailer.labor_amount, 0) ELSE NULL END`,
+    { summable: true, sensitive: true },
+  ),
   // List-view parity fields (Salesforce-style List Views). Verified against db/fcr_core.schema.sql:
   // full_vin varchar(17), the *_date columns are real `date`, parts_available is `text`,
   // completetion_percentage/estimated_hours are `numeric`. (Column name `completetion_percentage`

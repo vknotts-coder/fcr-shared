@@ -52,6 +52,13 @@ export type ReportDefinition = {
     filterLogic?: string | null;
     groupBy?: ReportGroupBy | null;
     summaries: ReportSummary[];
+    /**
+     * Grand-total footer for a TABULAR report: aggregates computed over the whole scoped set (exact, DB-side,
+     * uncapped — same query as a summary report's grand total) and attached to the result as `totals`, WITHOUT
+     * collapsing the detail rows. Only valid in tabular mode (summaries empty); each non-count field must be a
+     * summable column that is also SELECTED (so the footer sits under a visible column). Empty/absent ⇒ no footer.
+     */
+    grandTotals?: ReportSummary[];
     sort?: ReportSort | null;
 };
 export type LogicNode = {
