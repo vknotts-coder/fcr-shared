@@ -78,6 +78,14 @@ describe("reportToCsv — tabular", () => {
   it("does NOT append the note when not truncated", () => {
     expect(reportToCsv(tabular())).not.toContain("PARTIAL RESULT");
   });
+  it("appends a Total footer row when grandTotals totals are present (sum under its source column)", () => {
+    const csv = reportToCsv(tabular({ totals: [{ field: "total_sales", agg: "sum", label: "Sum of Total sales", value: 1234.5 }] }));
+    // header + the 2 detail rows + a footer: "Total" under col 0, the sum (numeric) under total_sales, blank elsewhere.
+    expect(csv).toBe('Unit #,Total sales,Created\nT-100,-250.5,2026-09-03\n"a,b",,\nTotal,1234.5,');
+  });
+  it("emits NO footer row when there are no totals", () => {
+    expect(reportToCsv(tabular())).toBe('Unit #,Total sales,Created\nT-100,-250.5,2026-09-03\n"a,b",,');
+  });
   it("degrades (no throw) to REPORT_ROW_CAP if a truncated result arrives with rowCap absent (foreign/rehydrated)", () => {
     // reportToCsv is an exported API — a JSON-rehydrated / cross-version result could lack rowCap. It must
     // print the old constant, never throw on undefined.toLocaleString().

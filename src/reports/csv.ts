@@ -56,6 +56,14 @@ export function reportToCsv(result: ReportResult): string {
     const cols: ReportColumn[] = result.columns;
     const header = cols.map((c) => c.label);
     const rows: Field[][] = result.rows.map((row) => cols.map((c) => fieldForCsv(row[c.key] ?? null, c.type)));
+    // Grand-total FOOTER (def.grandTotals) — append a "Total" row with each total under its source column,
+    // mirroring the on-screen footer + the summary branch below. The value stays a real number (summable in
+    // Excel). A total has no column (e.g. a count over "*") ⇒ not placed. These aggregates are DB-side and
+    // UNCAPPED, so the footer is exact even when the detail rows were truncated at the cap.
+    if (result.totals && result.totals.length > 0) {
+      const byField = new Map(result.totals.map((t) => [t.field, t]));
+      rows.push(cols.map((c, ci) => (byField.has(c.key) ? byField.get(c.key)!.value : ci === 0 ? "Total" : "")));
+    }
     csv = toCsv(header, rows);
   } else {
     const cols = result.columns;
