@@ -499,6 +499,20 @@ export function validateDefinition(raw: unknown, obj: ClientReportObject): Valid
     if (!meta.summable) errors.push(`grandTotal ${s.agg} needs a numeric field: ${s.field}`);
     else if (!d.columns.includes(s.field)) errors.push(`grandTotal field must be a selected column: ${s.field}`);
   }
+  // The tabular footer is a SINGLE row — one total per column. Reject TWO DIFFERENT aggregates on the same
+  // field (e.g. sum AND avg of the same column): a one-row footer can't show both, and a renderer/CSV that
+  // silently kept one is exactly the ambiguity to forbid at the source. Identical duplicates (same field+agg)
+  // are fine — they collapse to one via the summaryKey dedupe below. (count totals share no column — exempt.)
+  const grandTotalAggsByField = new Map<string, Set<string>>();
+  for (const s of grandTotals) {
+    if (s.agg === "count") continue;
+    const aggs = grandTotalAggsByField.get(s.field) ?? new Set<string>();
+    aggs.add(s.agg);
+    grandTotalAggsByField.set(s.field, aggs);
+  }
+  for (const [gtField, aggs] of grandTotalAggsByField) {
+    if (aggs.size > 1) errors.push(`duplicate grandTotal field (a tabular footer shows one total per column): ${gtField}`);
+  }
 
   // Sort: field exists. In tabular it must be a selected column; in summary it may be the group or a
   // summary key (validated loosely — the runner sorts what it has).
