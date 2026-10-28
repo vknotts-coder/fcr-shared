@@ -1,11 +1,5 @@
-/** Minimal query surface — structurally satisfied by node-postgres `Pool` and
- *  `@neondatabase/serverless`'s `Pool`. Kept local so this package needs no DB driver
- *  (identical to @fcr/core/rbac's Queryable). */
-export interface Queryable {
-    query<T = unknown>(text: string, params?: unknown[]): Promise<{
-        rows: T[];
-    }>;
-}
+export type { Queryable } from "../rbac/index.js";
+import type { Queryable } from "../rbac/index.js";
 export declare const PASSWORD_MIN_LENGTH = 10;
 /** An admin-set temporary password (must_change) is only valid for this long after it was set. */
 export declare const TEMP_PASSWORD_TTL_MS: number;
@@ -19,11 +13,13 @@ export interface PasswordHash {
     algo: "scrypt";
 }
 /** Hash a plaintext password with a fresh random salt. Use when an admin sets a temp password or a user
- *  changes their own. Validation (length) is the caller's job — see assertPasswordPolicy. */
-export declare function hashPassword(password: string): PasswordHash;
+ *  changes their own. Validation (length) is the caller's job — see passwordMeetsPolicy. */
+export declare function hashPassword(password: string): Promise<PasswordHash>;
 /** Constant-time scrypt verify. Returns false (never throws) on any missing/garbled stored credential, so a
- *  credential-less row (PIN/kiosk account, or office row not yet provisioned) simply fails to authenticate. */
-export declare function verifyPassword(password: string, salt: string | null, hash: string | null): boolean;
+ *  credential-less row (PIN/kiosk account, or office row not yet provisioned) simply fails to authenticate.
+ *  Buffer.from(…, "hex") truncates bad input rather than throwing, so the length guard — not a try/catch — is
+ *  what rejects a garbled hash. */
+export declare function verifyPassword(password: string, salt: string | null, hash: string | null): Promise<boolean>;
 /** True when a plaintext password meets policy. Caller gates set/change on this (not authenticate — an
  *  existing weaker password still logs in; policy applies to NEW passwords). */
 export declare function passwordMeetsPolicy(password: string): boolean;
@@ -46,14 +42,19 @@ export type OfficeAuthResult = {
 /**
  * Authenticate an OFFICE user against the shared store for a specific app.
  *
- * Flow (fail-closed): resolve the active, non-deleted `office` account by case-insensitive username → if
- * locked (locked_until in the future) return "locked" → verify the scrypt password; on miss, increment
- * failed_attempts (and set locked_until once the threshold is hit) and return "invalid" → on a temp
- * (must_change) password past its 72h TTL return "temp_expired" → confirm an active app_access grant for
- * `appKey`, else "no_app_access" → on success reset failed_attempts and return the user (carrying mustChange
- * so the caller forces a change before granting access).
+ * Flow (fail-closed): resolve the active, non-deleted `office` account by case-insensitive username — on no
+ * row, spend a decoy verify (so an unknown username is not a timing oracle) and return "invalid" → if locked
+ * (locked_until in the future) return "locked" → verify the scrypt password; on miss, atomically increment
+ * failed_attempts (and set locked_until once the threshold is hit, computed SQL-side so concurrent misses
+ * can't lose the update) and return "invalid" → the password is now proven, so clear any stale counter/lock →
+ * on a temp (must_change) password past its 72h TTL return "temp_expired" → confirm an active app_access grant
+ * for `appKey`, else "no_app_access" → return the user (carrying mustChange so the caller forces a change).
  *
- * Writes failed_attempts/locked_until/failed-reset on the injected pool — app-owned columns, no SF exposure.
+ * ⚠ Per-account lockout here has no per-source/IP dimension or backoff, so it is also a targeted DoS vector
+ * against a known username (10 wrong guesses → 15-min lock). Accepted interim tradeoff; S6 adds per-source
+ * rate-limiting / exponential backoff / admin unlock (epic #366).
+ *
+ * Writes failed_attempts/locked_until on the injected pool — app-owned columns, no SF exposure.
  */
 export declare function authenticateOffice(pool: Queryable, args: {
     username: string;
