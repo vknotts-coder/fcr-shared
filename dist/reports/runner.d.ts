@@ -73,7 +73,7 @@ export type BuiltQuery = {
 /** Assemble the tabular SELECT (columns + the link id) with the +1 truncation probe. Exposed for tests.
  *  `rowCap` is the LIMIT the runner enforces — the on-screen grid passes REPORT_ROW_CAP (the default), the
  *  CSV export path passes EXPORT_ROW_CAP; the `+ 1` probe detects "there are more" for either. */
-export declare function buildTabularQuery(obj: RegistryObject, def: ReportDefinition, fieldsByKey: Map<string, RegistryField>, principal: Principal, rowCap?: number): BuiltQuery;
+export declare function buildTabularQuery(obj: RegistryObject, def: ReportDefinition, fieldsByKey: Map<string, RegistryField>, principal: Principal, rowCap?: number, where?: WhereSql): BuiltQuery;
 /**
  * Exact, UNCAPPED summary via a real DB-side GROUP BY (replaces the earlier JS-aggregation-over-a-capped
  * window, which silently under-counted once a scoped set exceeded the row cap). Groups + aggregates are

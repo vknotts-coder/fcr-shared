@@ -296,12 +296,11 @@ export function buildTabularQuery(
   fieldsByKey: Map<string, RegistryField>,
   principal: Principal,
   rowCap: number = REPORT_ROW_CAP,
+  where: WhereSql = buildWhere(obj, def, fieldsByKey, principal),
 ): BuiltQuery {
   const cols = def.columns.map((k) => fieldsByKey.get(k)).filter((f): f is RegistryField => !!f);
   const items = cols.map((f) => selectItem(obj, f));
   if (linkActive(obj)) items.push(`${ident(obj.key)}.${ident(obj.link!.path)} AS ${ident("__id")}`);
-
-  const where = buildWhere(obj, def, fieldsByKey, principal);
 
   let orderBy = "";
   if (def.sort) {
@@ -429,14 +428,16 @@ export async function runReport(
       ]);
       return { ok: true, result: buildSummaryResult(obj, def, fieldsByKey, grouped.rows, total.rows[0]) };
     }
-    const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
     const gt = def.grandTotals ?? [];
     if (gt.length > 0) {
       // Tabular report WITH a grand-total footer: run the capped detail query AND an exact, uncapped total
       // query (same scoped WHERE, no GROUP BY — reuses the summary grand-total machinery via a shadow def
-      // whose `summaries` are the grandTotals). The detail rows are unaffected by the aggregates.
+      // whose `summaries` are the grandTotals). The detail rows are unaffected by the aggregates. Build the
+      // scoped WHERE ONCE and thread it into both builders (mirrors the summary path above).
+      const where = buildWhere(obj, def, fieldsByKey, principal);
       const shadow: ReportDefinition = { ...def, summaries: gt };
-      const tq = buildSummaryTotalQuery(obj, shadow, fieldsByKey, principal);
+      const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap, where);
+      const tq = buildSummaryTotalQuery(obj, shadow, fieldsByKey, principal, where);
       const [main, tot] = await Promise.all([
         db.query<Record<string, unknown>>(q.sql, q.params),
         db.query<Record<string, unknown>>(tq.sql, tq.params),
@@ -445,6 +446,7 @@ export async function runReport(
       const totals = buildTabularTotals(shadow, fieldsByKey, tot.rows[0]);
       return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? main.rows.slice(0, rowCap) : main.rows, truncated, rowCap, totals) };
     }
+    const q = buildTabularQuery(obj, def, fieldsByKey, principal, rowCap);
     const { rows } = await db.query<Record<string, unknown>>(q.sql, q.params);
     const truncated = rows.length > rowCap;
     return { ok: true, result: buildTabular(obj, def, fieldsByKey, truncated ? rows.slice(0, rowCap) : rows, truncated, rowCap) };

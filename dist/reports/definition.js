@@ -133,6 +133,39 @@ function rejectUnknownKeys(o, allowed, where, errors) {
     }
 }
 /**
+ * Shape-parse one aggregate list (`summaries` or `grandTotals` — identical shape: `{field, agg}[]`, capped
+ * by MAX_SUMMARIES). `rawVal` is the raw property (absent ⇒ []); `name` is the key for error messages.
+ * Pushes any shape errors onto `errors` and returns the valid entries.
+ */
+function parseSummaryList(rawVal, name, errors) {
+    const out = [];
+    if (rawVal === undefined)
+        return out;
+    if (!Array.isArray(rawVal)) {
+        errors.push(`${name}: must be an array`);
+        return out;
+    }
+    if (rawVal.length > MAX_SUMMARIES) {
+        errors.push(`${name}: at most ${MAX_SUMMARIES}`);
+        return out;
+    }
+    rawVal.forEach((s, idx) => {
+        if (!isObject(s)) {
+            errors.push(`${name}[${idx}]: must be an object`);
+            return;
+        }
+        rejectUnknownKeys(s, ["field", "agg"], `${name}[${idx}]`, errors);
+        const aggOk = s.agg === "sum" || s.agg === "avg" || s.agg === "count" || s.agg === "min" || s.agg === "max";
+        if (!isNonEmptyString(s.field))
+            errors.push(`${name}[${idx}].field: required non-empty string`);
+        if (!aggOk)
+            errors.push(`${name}[${idx}].agg: must be sum|avg|count|min|max`);
+        if (isNonEmptyString(s.field) && aggOk)
+            out.push({ field: s.field, agg: s.agg });
+    });
+    return out;
+}
+/**
  * Strict shape parse of a raw (client- or DB-sourced) value into a RawDefinition, mirroring scshop's
  * zod schema: types enforced, unknown keys rejected, arrays size-capped, `filters`/`summaries` default
  * to []. Returns typed data or a list of shape errors. Never throws.
@@ -227,57 +260,10 @@ function parseRawDefinition(raw) {
     else {
         groupBy = raw.groupBy;
     }
-    const summaries = [];
-    if (raw.summaries !== undefined) {
-        if (!Array.isArray(raw.summaries)) {
-            errors.push("summaries: must be an array");
-        }
-        else if (raw.summaries.length > MAX_SUMMARIES) {
-            errors.push(`summaries: at most ${MAX_SUMMARIES}`);
-        }
-        else {
-            raw.summaries.forEach((s, idx) => {
-                if (!isObject(s)) {
-                    errors.push(`summaries[${idx}]: must be an object`);
-                    return;
-                }
-                rejectUnknownKeys(s, ["field", "agg"], `summaries[${idx}]`, errors);
-                const aggOk = s.agg === "sum" || s.agg === "avg" || s.agg === "count" || s.agg === "min" || s.agg === "max";
-                if (!isNonEmptyString(s.field))
-                    errors.push(`summaries[${idx}].field: required non-empty string`);
-                if (!aggOk)
-                    errors.push(`summaries[${idx}].agg: must be sum|avg|count|min|max`);
-                if (isNonEmptyString(s.field) && aggOk)
-                    summaries.push({ field: s.field, agg: s.agg });
-            });
-        }
-    }
-    // grandTotals: same shape as summaries (tabular-footer aggregates). Capped by MAX_SUMMARIES.
-    const grandTotals = [];
-    if (raw.grandTotals !== undefined) {
-        if (!Array.isArray(raw.grandTotals)) {
-            errors.push("grandTotals: must be an array");
-        }
-        else if (raw.grandTotals.length > MAX_SUMMARIES) {
-            errors.push(`grandTotals: at most ${MAX_SUMMARIES}`);
-        }
-        else {
-            raw.grandTotals.forEach((s, idx) => {
-                if (!isObject(s)) {
-                    errors.push(`grandTotals[${idx}]: must be an object`);
-                    return;
-                }
-                rejectUnknownKeys(s, ["field", "agg"], `grandTotals[${idx}]`, errors);
-                const aggOk = s.agg === "sum" || s.agg === "avg" || s.agg === "count" || s.agg === "min" || s.agg === "max";
-                if (!isNonEmptyString(s.field))
-                    errors.push(`grandTotals[${idx}].field: required non-empty string`);
-                if (!aggOk)
-                    errors.push(`grandTotals[${idx}].agg: must be sum|avg|count|min|max`);
-                if (isNonEmptyString(s.field) && aggOk)
-                    grandTotals.push({ field: s.field, agg: s.agg });
-            });
-        }
-    }
+    // `summaries` (grouped-report aggregates) and `grandTotals` (tabular-footer aggregates) share an
+    // identical shape — parsed by one helper so the agg set / cap / key rules can't drift between them.
+    const summaries = parseSummaryList(raw.summaries, "summaries", errors);
+    const grandTotals = parseSummaryList(raw.grandTotals, "grandTotals", errors);
     let sort;
     if (raw.sort !== undefined && raw.sort !== null) {
         if (!isObject(raw.sort)) {
