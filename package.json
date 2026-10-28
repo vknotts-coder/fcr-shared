@@ -1,7 +1,7 @@
 {
   "name": "@fcr/core",
-  "version": "0.27.0",
-  "description": "Shared FCR platform code \u2014 RBAC engine + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog + unit-file + unit-photo upload subsystem. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
+  "version": "0.28.0",
+  "description": "Shared FCR platform code \u2014 RBAC engine + office credential/auth path + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog + unit-file + unit-photo upload subsystem. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
   "sideEffects": false,
@@ -61,6 +61,10 @@
     "./uploads": {
       "types": "./dist/uploads/index.d.ts",
       "default": "./dist/uploads/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "default": "./dist/auth/index.js"
     }
   },
   "files": [
