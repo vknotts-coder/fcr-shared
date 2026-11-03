@@ -91,6 +91,17 @@ describe("mergeColumnOrder", () => {
     expect(cat).toEqual(["a", "b", "c"]);
     expect(saved).toEqual(["c", "a"]);
   });
+
+  it("always returns a caller-owned array (never the catalogColumns reference), so mutating the result is safe", () => {
+    const cat = ["a", "b", "c"];
+    // every branch: no-saved-order early-out AND the reorder path.
+    for (const saved of [null, [] as string[], ["c", "a"]]) {
+      const out = mergeColumnOrder(cat, saved);
+      expect(out).not.toBe(cat); // distinct array reference
+      out.push("MUTATED");
+      expect(cat).toEqual(["a", "b", "c"]); // the catalog constant is untouched
+    }
+  });
 });
 
 describe("getListViewPref", () => {

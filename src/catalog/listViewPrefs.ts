@@ -149,7 +149,10 @@ export function mergeColumnOrder(
   catalogColumns: string[],
   savedOrder: string[] | null | undefined,
 ): string[] {
-  if (!savedOrder || savedOrder.length === 0) return catalogColumns;
+  // Return a COPY in the early-out too (not the caller's array by reference), so every path yields a
+  // caller-owned array — a consumer that mutates the result (e.g. a reorder UI splicing it) can never
+  // corrupt a shared module-level catalog constant process-wide.
+  if (!savedOrder || savedOrder.length === 0) return [...catalogColumns];
   const catalog = new Set(catalogColumns);
   const seen = new Set<string>();
   const ordered: string[] = [];

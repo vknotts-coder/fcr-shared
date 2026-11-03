@@ -96,8 +96,11 @@ export async function deleteListViewPref(db, accountId, objectKey, viewSlug) {
  * same set as `catalogColumns`, reordered (no duplicates, no extras) — reorder-only, matching #88 decision 3.
  */
 export function mergeColumnOrder(catalogColumns, savedOrder) {
+    // Return a COPY in the early-out too (not the caller's array by reference), so every path yields a
+    // caller-owned array — a consumer that mutates the result (e.g. a reorder UI splicing it) can never
+    // corrupt a shared module-level catalog constant process-wide.
     if (!savedOrder || savedOrder.length === 0)
-        return catalogColumns;
+        return [...catalogColumns];
     const catalog = new Set(catalogColumns);
     const seen = new Set();
     const ordered = [];
