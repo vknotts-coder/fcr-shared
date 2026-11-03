@@ -59,8 +59,15 @@ function fieldExpr(obj, field) {
     return field.type === "date" ? dateExpr(ref, field) : ref;
 }
 // ── Value coercion ───────────────────────────────────────────────────────────────────────────────
-/** Render a raw DB cell to its typed value. @neondatabase/serverless returns numeric + date columns as
- *  strings, so number/money → Number, date → the 'yyyy-mm-dd' string as-is. */
+/** Render a raw DB cell to its typed value. number/money → Number, boolean → bool. A `date` cell is
+ *  normalized to a canonical `YYYY-MM-DD` string so downstream renderers get a stable, reshapeable value.
+ *  ⚠ @neondatabase/serverless does NOT reliably hand back a date column as a 'yyyy-mm-dd' string — it
+ *  hydrates `date`/`timestamp` into a JS `Date` (see the fcr-neon-date-hydration lesson). A bare
+ *  `String(aDate)` yields the locale toString ("Thu Mar 09 2026 …"), which the grid then sliced to
+ *  "Thu Mar 09" — mangling every report/list-grid date. So branch on the runtime type: a `Date` → its
+ *  UTC calendar parts (the shop runs in a negative-offset zone, where neon's local-midnight Date reads
+ *  back the correct day via UTC getters, matching fetch.ts / @fcr/ui's formatDateCell); a string → its
+ *  10-char ISO head. */
 function coerceCell(value, type) {
     if (value == null)
         return null;
@@ -68,6 +75,17 @@ function coerceCell(value, type) {
         return Number(value);
     if (type === "boolean")
         return typeof value === "boolean" ? value : value === "true" || value === "t";
+    if (type === "date") {
+        if (value instanceof Date) {
+            if (Number.isNaN(value.getTime()))
+                return null;
+            const y = value.getUTCFullYear();
+            const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+            const d = String(value.getUTCDate()).padStart(2, "0");
+            return `${y}-${m}-${d}`;
+        }
+        return String(value).slice(0, 10);
+    }
     return String(value);
 }
 /** Coerce a filter's raw string input to the JS type bound as a parameter for the field's type. */

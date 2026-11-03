@@ -409,3 +409,33 @@ describe("grandTotals — tabular footer (detail rows kept + an exact DB-side to
     expect(client.fields.some((f) => f.key === "cost")).toBe(false);
   });
 });
+
+describe("date cell coercion — neon hydrates a date column to a JS Date", () => {
+  const dbRow = (row: Record<string, unknown>): Queryable => ({
+    query: async <T = unknown>() => ({ rows: [row] as T[] }),
+  });
+  const def = { object: "gadget", columns: ["name", "due"], filters: [], summaries: [] };
+
+  it("a JS Date date-cell normalizes to YYYY-MM-DD (not the locale String(Date) the grid then mangled)", async () => {
+    // Negative control: without the Date branch in coerceCell, this cell is String(new Date(…)) =
+    // "Thu Mar 09 2026 …" (sliced to "Thu Mar 09" downstream) — the fleet-wide grid-date bug this fixes.
+    const out = await runReport(def, admin, dbRow({ name: "g1", due: new Date(Date.UTC(2026, 2, 9)) }), gcatalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).rows[0].due).toBe("2026-03-09");
+  });
+
+  it("a string date-cell keeps its 10-char ISO head (pass-through unchanged)", async () => {
+    const out = await runReport(def, admin, dbRow({ name: "g1", due: "2026-03-09T00:00:00.000Z" }), gcatalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).rows[0].due).toBe("2026-03-09");
+  });
+
+  it("a null date-cell stays null", async () => {
+    const out = await runReport(def, admin, dbRow({ name: "g1", due: null }), gcatalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).rows[0].due).toBeNull();
+  });
+});
