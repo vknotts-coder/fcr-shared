@@ -409,3 +409,43 @@ describe("grandTotals — tabular footer (detail rows kept + an exact DB-side to
     expect(client.fields.some((f) => f.key === "cost")).toBe(false);
   });
 });
+
+describe("date cell coercion — neon hydrates a date column to a JS Date", () => {
+  const dbRow = (row: Record<string, unknown>): Queryable => ({
+    query: async <T = unknown>() => ({ rows: [row] as T[] }),
+  });
+  const def = { object: "gadget", columns: ["name", "due"], filters: [], summaries: [] };
+
+  it("a JS Date date-cell normalizes to the UTC calendar day (not the locale String(Date) the grid mangled)", async () => {
+    // Negative control: without the Date branch in coerceCell, this cell is String(new Date(…)) =
+    // "Thu Mar 09 2026 …" (sliced to "Thu Mar 09" downstream) — the fleet-wide grid-date bug this fixes.
+    // coerceCell is UTC-anchored (toISOString().slice(0,10)) — correct because a date column's instant is
+    // UTC-midnight on the fleet's UTC runtime (Vercel). Assert with BOTH the realistic UTC-midnight shape
+    // AND a non-midnight UTC instant on the same day, so the case isn't the vacuous "midnight is day 9 in
+    // every TZ" — the evening instant pins that we read the UTC day and don't roll it (a switch to local
+    // getters would diverge off-UTC). See the coerceCell doc for the TZ assumption.
+    const midnight = await runReport(def, admin, dbRow({ name: "g1", due: new Date("2026-03-09T00:00:00Z") }), gcatalog);
+    expect(midnight.ok).toBe(true);
+    if (!midnight.ok) return;
+    expect((midnight.result as TabularResult).rows[0].due).toBe("2026-03-09");
+
+    const evening = await runReport(def, admin, dbRow({ name: "g1", due: new Date("2026-03-09T20:30:00Z") }), gcatalog);
+    expect(evening.ok).toBe(true);
+    if (!evening.ok) return;
+    expect((evening.result as TabularResult).rows[0].due).toBe("2026-03-09");
+  });
+
+  it("a string date-cell keeps its 10-char ISO head (pass-through unchanged)", async () => {
+    const out = await runReport(def, admin, dbRow({ name: "g1", due: "2026-03-09T00:00:00.000Z" }), gcatalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).rows[0].due).toBe("2026-03-09");
+  });
+
+  it("a null date-cell stays null", async () => {
+    const out = await runReport(def, admin, dbRow({ name: "g1", due: null }), gcatalog);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect((out.result as TabularResult).rows[0].due).toBeNull();
+  });
+});

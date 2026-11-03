@@ -120,12 +120,31 @@ function fieldExpr(obj: RegistryObject, field: RegistryField): string {
 
 // ── Value coercion ───────────────────────────────────────────────────────────────────────────────
 
-/** Render a raw DB cell to its typed value. @neondatabase/serverless returns numeric + date columns as
- *  strings, so number/money → Number, date → the 'yyyy-mm-dd' string as-is. */
+/** Render a raw DB cell to its typed value. number/money → Number, boolean → bool. A `date` cell is
+ *  normalized to a canonical `YYYY-MM-DD` string so downstream renderers get a stable, reshapeable value.
+ *  ⚠ @neondatabase/serverless does NOT reliably hand back a date column as a 'yyyy-mm-dd' string — it
+ *  hydrates `date`/`timestamp` into a JS `Date` (see the fcr-neon-date-hydration lesson). A bare
+ *  `String(aDate)` yields the locale toString ("Thu Mar 09 2026 …"), which the grid then sliced to
+ *  "Thu Mar 09" — mangling every report/list-grid date.
+ *  Fix: normalize with the module's date-only idiom — a Date → `toISOString().slice(0,10)`, a string →
+ *  its 10-char head (identical to `canned/framework.ts`'s exported `toDateOnly`; inlined rather than
+ *  imported because framework.ts imports back from this module — a value import would cycle). This is
+ *  **UTC-anchored**: a date column's instant is UTC-midnight on the UTC runtime the fleet deploys to
+ *  (Vercel), so the ISO head IS the stored calendar day there, matching every other date-only path
+ *  (`toDateOnly`, events, `@fcr/ui`'s `formatDateCell`, the record page's fetch.ts). (A non-UTC
+ *  *positive*-offset host would read a day early; the fleet has none, and the whole date-only convention
+ *  already assumes the UTC runtime.) `toISOString()` throws on an invalid Date, so guard NaN → null first. */
 function coerceCell(value: unknown, type: FieldType): CellValue {
   if (value == null) return null;
   if (type === "money" || type === "number") return Number(value);
   if (type === "boolean") return typeof value === "boolean" ? value : value === "true" || value === "t";
+  if (type === "date") {
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return null;
+      return value.toISOString().slice(0, 10);
+    }
+    return String(value).slice(0, 10);
+  }
   return String(value);
 }
 
