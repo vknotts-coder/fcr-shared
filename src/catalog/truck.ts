@@ -11,7 +11,7 @@
 
 import type { Principal } from "../contracts/index.js";
 import type { RegistryField, RegistryObject } from "../reports/registry-core.js";
-import { str, dateF, dateTzF, numF, money, bool, computed, tzToday, sfDuration } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, computed, tzToday, sfDuration } from "./fields.js";
 import { statusField, TRUCK_STATUS_ORDER } from "./status-order.js";
 
 /** The truck object's field table (schema-coupled; identical across apps). */
@@ -57,11 +57,11 @@ export const truckFields: RegistryField[] = [
   // invoice_1 is an invoice NUMBER (identifier), not a dollar amount, so it is not financials-gated.
   str("vin", "VIN", "identity"),
   str("invoice_1", "Invoice #", "status"),
-  // invoice_2 + rework are already synced to fcr_core (sync-targets Invoice_2__c / Rework__c); exposed here so
-  // the Final List report can mirror SF's "all invoices blank AND Rework = false" filter. rework is a boolean
-  // (SF checkbox) → filterable eq true/false.
+  // invoice_2 is already a synced fcr_core column (sync-targets Invoice_2__c); exposed here so the Final List
+  // report can mirror SF's "invoice 1 + 2 blank" filter. (SF also checks Rework = false, but fcr_core has NO
+  // `rework` column yet — sync-targets maps Rework__c→rework with no backing column — so rework is deferred to
+  // the sync + migration follow-up, epic fcr-estimating#28.)
   str("invoice_2", "Invoice #2", "status"),
-  bool("rework", "Rework", "status"),
   str("contacts", "Contacts", "customer", "fcr_collision_contacts"),
   dateF("estimate_completed", "Estimate completed", "status"),
   dateF("estimate_finalized", "Estimate finalized", "status"),
