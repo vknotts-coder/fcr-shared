@@ -2,6 +2,7 @@ import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../ty
 export declare const ESTIMATOR_NAMES: string[];
 export declare const TRUCK_NUMERIC_COLS: Set<string>;
 export declare const TRUCK_DATE_COLS: Set<string>;
+export declare const TRUCK_BOOL_COLS: Set<string>;
 export declare const TRUCK_FORM_FIELDS: FormField[];
 /** Truck status seed/stamp. CREATE: seed status from the pickup arrangement (Customer Drop Off
  *  mode → "Customer Drop Off"; a pickup address → "Awaiting Pickup"; else "Awaiting Pickup Info"),

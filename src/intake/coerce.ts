@@ -13,6 +13,10 @@ export function isBlank(v: unknown): boolean {
  *  value would overflow the column and 500 the create; the specs reject it as a friendly error. */
 export const VIN_MAX_LENGTH = 17;
 
+// Yes/No picklist for a boolean <select> (coerced to true/false/null). Shared so the truck + trailer specs'
+// rework/parts-available selects have one source of truth instead of each inlining the literal.
+export const YES_NO = ["Yes", "No"];
+
 export const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC",
 ];

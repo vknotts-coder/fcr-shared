@@ -64,6 +64,22 @@ describe("truck object", () => {
     expect(truckFields.find((f) => f.key === "total_sales")?.sensitive).toBe(true);
     expect(truckFields.find((f) => f.key === "sf_name")?.sensitive).toBeUndefined();
   });
+
+  it("exposes the epic #28 Slice B fields: invoice_3/4, rework, total_billed_hours; body_s folded into est. hours", () => {
+    const byKey = new Map(truckFields.map((f) => [f.key, f]));
+    expect(byKey.get("invoice_3")?.path).toBe("invoice_3");
+    expect(byKey.get("invoice_4")?.path).toBe("invoice_4");
+    // rework is a boolean (filterable for the Final List "Rework = false"), not sensitive
+    expect(byKey.get("rework")?.type).toBe("boolean");
+    expect(byKey.get("rework")?.summable).toBe(false);
+    expect(byKey.get("rework")?.sensitive).toBeUndefined();
+    // total_billed_hours is a summable number column (SUMmed per shop on the sales report), hours not dollars
+    expect(byKey.get("total_billed_hours")?.type).toBe("number");
+    expect(byKey.get("total_billed_hours")?.summable).toBe(true);
+    expect(byKey.get("total_billed_hours")?.sensitive).toBeUndefined();
+    // total_estimated_hours now includes the Body_S component (exact SF match)
+    expect(byKey.get("total_estimated_hours")?.expr).toContain("truck.body_s_hours");
+  });
 });
 
 describe("trailer object", () => {
