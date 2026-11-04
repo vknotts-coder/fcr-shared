@@ -5,7 +5,7 @@
 // this seeds the initial status from the pickup arrangement and stamps status_date on a manual
 // status change, nothing more. Columns verified against fcr-dispatch db/fcr_core.schema.sql.
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
@@ -54,7 +54,7 @@ export const TRUCK_FORM_FIELDS = [
     { column: "invoice_2", label: "Invoice #2", section: "invoice", input: "text" },
     { column: "invoice_3", label: "Invoice #3", section: "invoice", input: "text" },
     { column: "invoice_4", label: "Invoice #4", section: "invoice", input: "text" },
-    { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", "Yes", "No"] },
+    { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", ...YES_NO] },
 ];
 /** Truck status seed/stamp. CREATE: seed status from the pickup arrangement (Customer Drop Off
  *  mode → "Customer Drop Off"; a pickup address → "Awaiting Pickup"; else "Awaiting Pickup Info"),

@@ -4,7 +4,7 @@
 // synchronous. Only the app coupling (TRAILER_STATUS_ORDER, centralToday, SectionKey) is
 // internalized so the module carries no fcr-trailers import.
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 // The two special pickup/delivery "driver" values the SF validation rules key on.
 const CUSTOMER_DROP_OFF = "CUSTOMER DROP OFF";
 const CUSTOMER_PICKUP = "CUSTOMER PICKUP";
@@ -17,7 +17,6 @@ const TRAILER_STATUS_ORDER = [
     "Total Loss", "REWORK", "Hold", "Do Not Repair",
 ];
 const TYPES = ["Dry Van", "Reefer", "Flat Bed", "Tanker", "Box Truck", "Other"];
-const YES_NO = ["Yes", "No"];
 const REPAIR_TEAMS = ["DS", "JL", "JV", "MJ", "TR", "AE"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
 export const TRAILER_NUMERIC_COLS = new Set([

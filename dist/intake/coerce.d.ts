@@ -4,6 +4,7 @@ export declare function isBlank(v: unknown): boolean;
 /** Max VIN length — the fcr_core truck.vin / trailer.full_vin columns are varchar(17). A longer
  *  value would overflow the column and 500 the create; the specs reject it as a friendly error. */
 export declare const VIN_MAX_LENGTH = 17;
+export declare const YES_NO: string[];
 export declare const US_STATES: string[];
 /** Map a Yes/No (or true/false/1/0) select value to a real boolean, or null when it is neither.
  *  A boolean fcr_core column (e.g. trailer.rework) is edited via a Yes/No `select`, so the raw
