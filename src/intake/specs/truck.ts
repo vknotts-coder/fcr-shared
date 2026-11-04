@@ -6,7 +6,7 @@
 // status change, nothing more. Columns verified against fcr-dispatch db/fcr_core.schema.sql.
 
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 
 const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
@@ -61,7 +61,7 @@ export const TRUCK_FORM_FIELDS: FormField[] = [
   { column: "invoice_2", label: "Invoice #2", section: "invoice", input: "text" },
   { column: "invoice_3", label: "Invoice #3", section: "invoice", input: "text" },
   { column: "invoice_4", label: "Invoice #4", section: "invoice", input: "text" },
-  { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", "Yes", "No"] },
+  { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", ...YES_NO] },
 ];
 
 /** Truck status seed/stamp. CREATE: seed status from the pickup arrangement (Customer Drop Off

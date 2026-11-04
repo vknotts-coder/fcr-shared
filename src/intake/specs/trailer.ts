@@ -5,7 +5,7 @@
 // internalized so the module carries no fcr-trailers import.
 
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH } from "../coerce.js";
+import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 
 // The two special pickup/delivery "driver" values the SF validation rules key on.
@@ -22,7 +22,6 @@ const TRAILER_STATUS_ORDER: string[] = [
 ];
 
 const TYPES = ["Dry Van", "Reefer", "Flat Bed", "Tanker", "Box Truck", "Other"];
-const YES_NO = ["Yes", "No"];
 const REPAIR_TEAMS = ["DS", "JL", "JV", "MJ", "TR", "AE"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
 
