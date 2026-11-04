@@ -8,7 +8,7 @@
 //
 // Column paths verified against fcr-dispatch db/fcr_core.schema.sql (2026-09-03). Money/mileage columns are
 // stored as SF-synced text on some rows; the runner casts numeric/money aggregates (SUM/AVG) explicitly.
-import { str, dateF, dateTzF, numF, money, computed, tzToday, sfDuration } from "./fields.js";
+import { str, dateF, dateTzF, numF, money, bool, computed, tzToday, sfDuration } from "./fields.js";
 import { statusField, TRUCK_STATUS_ORDER } from "./status-order.js";
 /** The truck object's field table (schema-coupled; identical across apps). */
 export const truckFields = [
@@ -52,11 +52,15 @@ export const truckFields = [
     // invoice_1 is an invoice NUMBER (identifier), not a dollar amount, so it is not financials-gated.
     str("vin", "VIN", "identity"),
     str("invoice_1", "Invoice #", "status"),
-    // invoice_2 is already a synced fcr_core column (sync-targets Invoice_2__c); exposed here so the Final List
-    // report can mirror SF's "invoice 1 + 2 blank" filter. (SF also checks Rework = false, but fcr_core has NO
-    // `rework` column yet — sync-targets maps Rework__c→rework with no backing column — so rework is deferred to
-    // the sync + migration follow-up, epic fcr-estimating#28.)
+    // invoice_2/3/4 are synced fcr_core columns (sync-targets Invoice_2/3/4__c); exposed here so the Final List
+    // report can mirror SF's full "invoice 1-4 all blank AND Rework = false" filter. invoice_3/invoice_4 and the
+    // `rework` boolean were added to fcr_core by migration 202611041837 (epic fcr-estimating#28 Slice B plumbing,
+    // fcr-dispatch #391); before that only invoice_1/2 existed, so the Final List under-filtered.
     str("invoice_2", "Invoice #2", "status"),
+    str("invoice_3", "Invoice #3", "status"),
+    str("invoice_4", "Invoice #4", "status"),
+    // Rework checkbox (SF Rework__c → rework boolean). The Final List excludes reworked trucks (SF "Rework = false").
+    bool("rework", "Rework", "status"),
     str("contacts", "Contacts", "customer", "fcr_collision_contacts"),
     dateF("estimate_completed", "Estimate completed", "status"),
     dateF("estimate_finalized", "Estimate finalized", "status"),
@@ -110,11 +114,16 @@ export const truckFields = [
     // (SF rolls these up in Total_Estimated_Hours__c / Finalized_Total_Hours__c). COALESCE each area to 0 so a
     // blank area doesn't null the whole total — matches SF's "treat blank as zero" arithmetic. summable ⇒ the
     // reports SUM them per shop; not sensitive (hours, not dollars) so no financials gate.
-    //   ⚠ total_estimated_hours OMITS SF's Body_S component — `body_s_hours` is NOT a synced fcr_core column
-    //   (Body_S_Hours__c is unmapped). An exact match needs that column synced (epic fcr-estimating#28 Slice B).
-    //   total_billed_hours (SF Total_Billed_Hours__c, a stored non-formula field) is likewise unsynced → deferred.
-    computed("number", "total_estimated_hours", "Est. hours", "status", `COALESCE(truck.body_hours,0) + COALESCE(truck.frame_hours,0) + COALESCE(truck.mechanical_hours,0) + COALESCE(truck.refinish_hours,0)`, { summable: true }),
+    //   total_estimated_hours now includes SF's Body_S component — `body_s_hours` (SF Body_S_Hours__c) was synced
+    //   by migration 202611041837 (epic fcr-estimating#28 Slice B, fcr-dispatch #391), so this is an EXACT match
+    //   to SF's Total_Estimated_Hours__c roll-up. total_billed_hours (SF Total_Billed_Hours__c, a stored
+    //   non-formula field) is now synced too and exposed as its own column field below.
+    computed("number", "total_estimated_hours", "Est. hours", "status", `COALESCE(truck.body_hours,0) + COALESCE(truck.body_s_hours,0) + COALESCE(truck.frame_hours,0) + COALESCE(truck.mechanical_hours,0) + COALESCE(truck.refinish_hours,0)`, { summable: true }),
     computed("number", "finalized_total_hours", "Finalized hours", "status", `COALESCE(truck.finalized_body_hours,0) + COALESCE(truck.finalized_frame_hours,0) + COALESCE(truck.finalized_mechanical_hours,0) + COALESCE(truck.finalized_refinish_hours,0)`, { summable: true }),
+    // SF's stored Total_Billed_Hours__c (a non-formula field, not a component roll-up) — now synced to the
+    // total_billed_hours column. Summable (numF default) so the Estimated Repair Total Sales report can SUM it
+    // per shop; hours, not dollars, so NOT financials-gated.
+    numF("total_billed_hours", "Total billed hours", "status"),
     // Account FK — the stable customer.sf_id link (truck's column is fcr_collision_customer). Filterable so an
     // account-scoped list (a search hit → /trucks?account=<sf_id>) can filter on it id-exact; not a friendly
     // display column, so section=customer. Keyed `fcr_collision_account` to match trailer.ts so the consuming

@@ -28,6 +28,9 @@ const TRUCK_INTAKE_STATUSES = ["Awaiting Pickup Info", "Awaiting Pickup", "Custo
 
 export const TRUCK_NUMERIC_COLS = new Set<string>([]);
 export const TRUCK_DATE_COLS = new Set<string>(["notify_date", "status_date"]);
+// `rework` is a real boolean column edited via a Yes/No <select>; coerced to true/false/null (blank) so the
+// value binds to the boolean column (mirrors TRAILER_BOOL_COLS). Added with the billing section (epic #28 B).
+export const TRUCK_BOOL_COLS = new Set(["rework"]);
 
 export const TRUCK_FORM_FIELDS: FormField[] = [
   // Information
@@ -49,6 +52,16 @@ export const TRUCK_FORM_FIELDS: FormField[] = [
   { column: "pickup_zip_code", label: "Pickup ZIP", section: "incoming_transport", input: "text" },
   { column: "pickup_tow_drive", label: "Pickup Mode", section: "incoming_transport", input: "select", options: ["", ...PICKUP_MODES] },
   { column: "pickup_notes", label: "Pickup Notes", section: "incoming_transport", input: "textarea" },
+  // Invoice / Rework — SF-parity invoice numbers + the rework flag, in the SF page-layout sections. These
+  // reverse-sync Core→SF field-scoped via fcr-dispatch TRUCK_EDIT_COLS (invoice_1-4 + rework, added in #391);
+  // updateUnit records whichever of them actually changed into dispatch_dirty_cols, so the push sends only the
+  // edited field. invoice_* are free-text numbers; rework is a Yes/No boolean (coerced via TRUCK_BOOL_COLS).
+  // epic fcr-estimating#28 Slice B.
+  { column: "invoice_1", label: "Invoice #1", section: "invoice", input: "text" },
+  { column: "invoice_2", label: "Invoice #2", section: "invoice", input: "text" },
+  { column: "invoice_3", label: "Invoice #3", section: "invoice", input: "text" },
+  { column: "invoice_4", label: "Invoice #4", section: "invoice", input: "text" },
+  { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", "Yes", "No"] },
 ];
 
 /** Truck status seed/stamp. CREATE: seed status from the pickup arrangement (Customer Drop Off
@@ -139,6 +152,7 @@ export const truckSpec: IntakeSpec = {
   formFields: TRUCK_FORM_FIELDS,
   numericCols: TRUCK_NUMERIC_COLS,
   dateCols: TRUCK_DATE_COLS,
+  boolCols: TRUCK_BOOL_COLS,
   references: [
     { column: "fcr_collision_customer", table: "customer", label: "FCR Collision Account" },
     { column: "fcr_collision_contacts", table: "unit_contact", label: "FCR Collision Contact" },
