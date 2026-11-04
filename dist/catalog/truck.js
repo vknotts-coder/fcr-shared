@@ -106,6 +106,15 @@ export const truckFields = [
     // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that; open-inclusive
     // once arrival exists.
     computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", `CASE WHEN truck.arrival_date IS NULL THEN NULL ELSE COALESCE(truck.delivery_date, ${tzToday}) - truck.arrival_date END`),
+    // Labor-hours totals for Jordan's sales reports, COMPUTED from the per-area hour columns already in fcr_core
+    // (SF rolls these up in Total_Estimated_Hours__c / Finalized_Total_Hours__c). COALESCE each area to 0 so a
+    // blank area doesn't null the whole total — matches SF's "treat blank as zero" arithmetic. summable ⇒ the
+    // reports SUM them per shop; not sensitive (hours, not dollars) so no financials gate.
+    //   ⚠ total_estimated_hours OMITS SF's Body_S component — `body_s_hours` is NOT a synced fcr_core column
+    //   (Body_S_Hours__c is unmapped). An exact match needs that column synced (epic fcr-estimating#28 Slice B).
+    //   total_billed_hours (SF Total_Billed_Hours__c, a stored non-formula field) is likewise unsynced → deferred.
+    computed("number", "total_estimated_hours", "Est. hours", "status", `COALESCE(truck.body_hours,0) + COALESCE(truck.frame_hours,0) + COALESCE(truck.mechanical_hours,0) + COALESCE(truck.refinish_hours,0)`, { summable: true }),
+    computed("number", "finalized_total_hours", "Finalized hours", "status", `COALESCE(truck.finalized_body_hours,0) + COALESCE(truck.finalized_frame_hours,0) + COALESCE(truck.finalized_mechanical_hours,0) + COALESCE(truck.finalized_refinish_hours,0)`, { summable: true }),
     // Account FK — the stable customer.sf_id link (truck's column is fcr_collision_customer). Filterable so an
     // account-scoped list (a search hit → /trucks?account=<sf_id>) can filter on it id-exact; not a friendly
     // display column, so section=customer. Keyed `fcr_collision_account` to match trailer.ts so the consuming
