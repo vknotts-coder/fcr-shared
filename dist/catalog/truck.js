@@ -52,6 +52,11 @@ export const truckFields = [
     // invoice_1 is an invoice NUMBER (identifier), not a dollar amount, so it is not financials-gated.
     str("vin", "VIN", "identity"),
     str("invoice_1", "Invoice #", "status"),
+    // invoice_2 is already a synced fcr_core column (sync-targets Invoice_2__c); exposed here so the Final List
+    // report can mirror SF's "invoice 1 + 2 blank" filter. (SF also checks Rework = false, but fcr_core has NO
+    // `rework` column yet — sync-targets maps Rework__c→rework with no backing column — so rework is deferred to
+    // the sync + migration follow-up, epic fcr-estimating#28.)
+    str("invoice_2", "Invoice #2", "status"),
     str("contacts", "Contacts", "customer", "fcr_collision_contacts"),
     dateF("estimate_completed", "Estimate completed", "status"),
     dateF("estimate_finalized", "Estimate finalized", "status"),
@@ -88,6 +93,16 @@ export const truckFields = [
     computed("number", "approved_to_complete_duration", "Approved → complete (days)", "turnaround", sfDuration("truck.repair_completion_date", "truck.estimate_approved")),
     computed("number", "repair_in_progress_duration", "Repair in progress (days)", "turnaround", sfDuration("truck.repair_completion_date", "truck.repair_start_date")),
     computed("number", "repair_completion_to_delivery_duration", "Repair complete → delivery (days)", "turnaround", sfDuration("truck.delivery_date", "truck.repair_completion_date")),
+    // Estimate-stage turn times for Jordan's reports. estimating_duration / awaiting_approval_duration mirror SF's
+    // Estimating_Duration__c / Awaiting_Approval_Duration__c — OPEN-inclusive (elapsed-so-far when the end is
+    // still blank, which is the norm for trucks sitting in those statuses), so DISPLAY-ONLY + NOT summable like
+    // the durations above.
+    computed("number", "estimating_duration", "Estimating (days)", "turnaround", sfDuration("truck.estimate_completed", "truck.arrival_date")),
+    computed("number", "awaiting_approval_duration", "Awaiting approval (days)", "turnaround", sfDuration("truck.estimate_approved", "truck.estimate_completed")),
+    // CLOSED arrival→estimate-complete span — NULL until the estimate is complete, so it never blends open rows
+    // and is therefore SAFE to aggregate. The ONE summable duration: it feeds "Estimate Completed Duration" (SF
+    // Arrival_to_Estimate_Complete_Duration__c), a report filtered to completed estimates that AVGs this span.
+    computed("number", "arrival_to_estimate_complete_duration", "Arrival → estimate complete (days)", "turnaround", `CASE WHEN truck.estimate_completed IS NULL THEN NULL ELSE truck.estimate_completed - truck.arrival_date END`, { summable: true }),
     // SF returns NULL when there is no arrival date at all (not an elapsed count) — preserve that; open-inclusive
     // once arrival exists.
     computed("number", "pickup_to_delivery", "Pickup → delivery (days)", "turnaround", `CASE WHEN truck.arrival_date IS NULL THEN NULL ELSE COALESCE(truck.delivery_date, ${tzToday}) - truck.arrival_date END`),
