@@ -32,6 +32,11 @@ export const TRUCK_DATE_COLS = new Set<string>(["notify_date", "status_date"]);
 // value binds to the boolean column (mirrors TRAILER_BOOL_COLS). Added with the billing section (epic #28 B).
 export const TRUCK_BOOL_COLS = new Set(["rework"]);
 
+// The pickup-address columns, in one place: the create-time status seed (applyTruckStatusEngine) and the
+// Awaiting-Pickup validation both key off "is any pickup-address field present". Shared so a column add/rename
+// can't let the two drift apart.
+const PICKUP_ADDR_FIELDS = ["pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"];
+
 export const TRUCK_FORM_FIELDS: FormField[] = [
   // Information
   { column: "sf_name", label: "Unit #", section: "information", input: "text" },
@@ -80,9 +85,7 @@ export function applyTruckStatusEngine(
 
   if (opts.isNew) {
     const mode = eff("pickup_tow_drive");
-    const hasPickupAddr = ["pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"].some(
-      (f) => !isBlank(eff(f)),
-    );
+    const hasPickupAddr = PICKUP_ADDR_FIELDS.some((f) => !isBlank(eff(f)));
     let initial: string;
     if (mode === CUSTOMER_DROP_OFF_MODE) initial = "Customer Drop Off";
     else if (hasPickupAddr) initial = "Awaiting Pickup";
@@ -106,6 +109,11 @@ export function validateTruck(
   const errors: ValidationError[] = [];
   const status = state.status;
 
+  // A field rule that runs over the MERGED before-image must scope itself to the fields the edit actually
+  // CHANGED, or an unchanged legacy value freezes edits to unrelated fields. On create (no before) every field
+  // counts as changed. Shared by the estimator_name and Awaiting-Pickup rules below.
+  const changed = (fields: string[]): boolean => !opts.before || fields.some((f) => state[f] !== opts.before![f]);
+
   // VIN fits the fcr_core.truck.vin column (varchar 17) — reject over-length as a friendly error
   // rather than letting the INSERT overflow and 500.
   if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
@@ -118,9 +126,8 @@ export function validateTruck(
   // hold out-of-domain values (the retired estimating runTransition wrote full names like "Jordan"). Only
   // validating a CHANGED value keeps an unchanged legacy estimator_name from freezing edits to unrelated fields
   // (there is no DB backstop, unlike VIN's varchar(17)). On create (no before) every value is "changed".
-  const estimatorChanged = !opts.before || state.estimator_name !== opts.before.estimator_name;
   if (
-    estimatorChanged &&
+    changed(["estimator_name"]) &&
     typeof state.estimator_name === "string" &&
     !isBlank(state.estimator_name) &&
     !ESTIMATOR_NAMES.includes(state.estimator_name)
@@ -133,13 +140,11 @@ export function validateTruck(
   // updateUnit validates the MERGED before-image, and legacy "Awaiting Pickup" rows can carry no stored address,
   // so without this guard an edit to an unrelated field (e.g. an invoice number or the rework flag) on such a row
   // is frozen with no way to satisfy it. On create (no before) every field is "changed".
-  const pickupCouplingFields = ["status", "pickup_tow_drive", "pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"];
-  const pickupCouplingChanged = !opts.before || pickupCouplingFields.some((f) => state[f] !== opts.before![f]);
   if (
-    pickupCouplingChanged &&
+    changed(["status", "pickup_tow_drive", ...PICKUP_ADDR_FIELDS]) &&
     status === "Awaiting Pickup" &&
     state.pickup_tow_drive !== CUSTOMER_DROP_OFF_MODE &&
-    ["pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"].every((f) => isBlank(state[f]))
+    PICKUP_ADDR_FIELDS.every((f) => isBlank(state[f]))
   ) {
     errors.push({ field: "pickup_street_address", message: "Status can not be Awaiting Pickup unless there is a pickup address or this is a customer drop off." });
   }
