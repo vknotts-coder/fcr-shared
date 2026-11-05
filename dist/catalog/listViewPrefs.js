@@ -32,13 +32,30 @@ function sanitizeColumns(value) {
     }
     return out;
 }
+/** Coerce a stored jsonb value OR an incoming `ColumnPrefInput` to a clean { order, hidden } arrangement.
+ *  Accepts both the legacy bare `string[]` (order only) and the `{ order, hidden }` object. `hidden` is
+ *  sanitized AND intersected with `order` (a hidden key not in the order is meaningless → dropped), so
+ *  `hidden ⊆ order` always holds. Anything unrecognized → empty. */
+function normalizeArrangement(value) {
+    if (Array.isArray(value))
+        return { order: sanitizeColumns(value), hidden: [] };
+    if (value && typeof value === "object") {
+        const order = sanitizeColumns(value.order);
+        const inOrder = new Set(order);
+        const hidden = sanitizeColumns(value.hidden).filter((k) => inOrder.has(k));
+        return { order, hidden };
+    }
+    return { order: [], hidden: [] };
+}
 function mapRow(r) {
+    const { order, hidden } = normalizeArrangement(r.columns);
     return {
         id: r.id,
         ownerAccountId: r.owner_account_id,
         objectKey: r.object_key,
         viewSlug: r.view_slug,
-        columns: sanitizeColumns(r.columns),
+        columns: order,
+        hidden,
         createdAt: String(r.created_at),
         updatedAt: String(r.updated_at),
     };
@@ -57,23 +74,43 @@ export async function getListViewPref(db, accountId, objectKey, viewSlug) {
  * ON CONFLICT specification".) The columns are sanitized to a clean string[]; an EMPTY result SOFT-DELETES
  * the pref (reset to the view's default order) rather than storing a meaningless empty order.
  *
- * The caller (the app's save action) validates the columns are a reorder of the view's OWN columns before
- * calling this — @fcr/core doesn't know an app's effective column set. `mergeColumnOrder` re-validates on
- * read regardless, so a bad store can never break a render.
+ * The caller (the app's save action) validates the columns are a subset/reorder of the view's OWN columns
+ * before calling this — @fcr/core doesn't know an app's effective column set. `mergeColumnOrder` /
+ * `resolveColumns` re-validate on read regardless, so a bad store can never break a render.
  *
- * Returns the saved pref, or null when the save was a reset-to-default (empty columns).
+ * Accepts the legacy bare `string[]` (order only, Track B) OR a `{ order, hidden }` arrangement (Track C
+ * show/hide). To keep reorder-only saves byte-identical to Track B, a save with nothing hidden is stored as
+ * the bare array; only a save that actually hides a column stores the `{ order, hidden }` object. An EMPTY
+ * order SOFT-DELETES the pref (reset to the view's default) rather than storing a meaningless empty order.
+ *
+ * Returns the saved pref, or null when the save was a reset-to-default (empty order).
  */
 export async function saveListViewPref(db, accountId, objectKey, viewSlug, columns) {
-    const cleaned = sanitizeColumns(columns);
-    if (cleaned.length === 0) {
+    const { order, hidden } = normalizeArrangement(columns);
+    if (order.length === 0) {
         await deleteListViewPref(db, accountId, objectKey, viewSlug);
         return null;
     }
+    // Store the bare array when nothing is hidden (identical to Track B's reorder-only rows), else the
+    // { order, hidden } object. Both are valid jsonb; `normalizeArrangement` reads either back.
+    //
+    // ⚠ CROSS-VERSION ROLLOUT HAZARD (Track C, #402). @fcr/core ships as immutable per-SHA tarballs and each
+    // consuming app pins its own SHA, so apps do NOT upgrade atomically while they all read the SAME shared
+    // `list_view_pref` rows. A pre-0.39.0 reader runs the old `sanitizeColumns` directly on `r.columns`, which
+    // returns [] for any non-array — so the instant an upgraded app stores a HIDE (the object form), an older
+    // reader of that row sees empty columns and silently falls back to the view's default (and a re-save from
+    // the old app would drop `hidden` entirely). A reorder-only save (bare array) stays fully back-readable.
+    // RULE: every app that READS this table must be on @fcr/core >= 0.39.0 before Track C hide-saves are
+    // enabled for it. Today the only reader is fcr-trailers, which repins to >= 0.39.0 in the same slice (C3)
+    // that turns on hide — so no mixed-version window exists; the residual risk is a rollback to an older pin.
+    // If a future rollout needs old readers to tolerate hides, make the shape forward-tolerant (keep `columns`
+    // a bare array, carry `hidden` in a separate additive column) instead of relaxing this rule.
+    const stored = hidden.length === 0 ? order : { order, hidden };
     const { rows } = await db.query(`INSERT INTO fcr_core.list_view_pref (owner_account_id, object_key, view_slug, columns)
      VALUES ($1, $2, $3, $4::jsonb)
      ON CONFLICT (owner_account_id, object_key, view_slug) WHERE deleted_at IS NULL
      DO UPDATE SET columns = EXCLUDED.columns, updated_at = now()
-     RETURNING *`, [accountId, objectKey, viewSlug, JSON.stringify(cleaned)]);
+     RETURNING *`, [accountId, objectKey, viewSlug, JSON.stringify(stored)]);
     const saved = rows[0];
     if (!saved)
         throw new Error("saveListViewPref: upsert returned no row");
@@ -115,4 +152,59 @@ export function mergeColumnOrder(catalogColumns, savedOrder) {
             ordered.push(key);
     }
     return ordered;
+}
+/**
+ * PURE. Apply a user's saved column arrangement (order + hidden) onto a view's live available columns —
+ * the Track C show/hide + reorder read-side, the superset of `mergeColumnOrder`.
+ *
+ * Rules, in order:
+ *   1. The first `lockedLeading` available columns (default 0) are PINNED FIRST and FORCED VISIBLE — the
+ *      record-link column can't be hidden or moved off the front, whatever the saved pref says.
+ *   2. Then the saved `order` keys that still exist in `available` (and aren't locked leaders), in saved
+ *      order; each hidden iff it's in the saved `hidden` set.
+ *   3. Then any available column the saved order never named (a column ADDED to the catalog since the save),
+ *      in available order, at the end — VISIBLE by default (a new column is surfaced, never silently hidden).
+ *   4. A key the catalog dropped disappears; nothing is ever invented — the arranged set is exactly the
+ *      `available` set, reordered. With no pref (null/empty) it's `available` in order, all visible.
+ *   5. Safety net: if every column ended up hidden (only reachable with `lockedLeading` 0 and a pref that
+ *      hides all), the first arranged column is forced visible so the grid is never empty.
+ *
+ * Returns `{ visible, arrangement }`: `visible` is the ordered keys the grid should render/query;
+ * `arrangement` is the full ordered set with per-column hidden flags, for a show/hide UI.
+ */
+export function resolveColumns(available, pref, opts) {
+    // De-dupe available defensively, preserving first-seen order (Set iteration order IS insertion order).
+    const availSet = new Set(available);
+    const avail = [...availSet];
+    const lock = Math.min(Math.max(0, opts?.lockedLeading ?? 0), avail.length);
+    const lockedKeys = avail.slice(0, lock);
+    const { order, hidden } = normalizeArrangement(pref);
+    const hiddenSet = new Set(hidden);
+    const arrangement = [];
+    const placed = new Set();
+    // 1. Locked leaders first, forced visible.
+    for (const key of lockedKeys) {
+        arrangement.push({ key, hidden: false });
+        placed.add(key);
+    }
+    // 2. Saved order (present, non-locked), honoring the hidden flag.
+    for (const key of order) {
+        if (!availSet.has(key) || placed.has(key))
+            continue;
+        arrangement.push({ key, hidden: hiddenSet.has(key) });
+        placed.add(key);
+    }
+    // 3. New-since-save available columns, appended visible.
+    for (const key of avail) {
+        if (placed.has(key))
+            continue;
+        arrangement.push({ key, hidden: false });
+        placed.add(key);
+    }
+    // 5. Never render an empty grid.
+    if (arrangement.length > 0 && arrangement.every((c) => c.hidden)) {
+        arrangement[0].hidden = false;
+    }
+    const visible = arrangement.filter((c) => !c.hidden).map((c) => c.key);
+    return { visible, arrangement };
 }
