@@ -55,6 +55,10 @@ export const computed = (type, key, label, section, expr, opts = {}) => ({
 // CUSTOMER DROP OFF / CUSTOMER PICKUP / ARRANGED BY CUSTOMER / N/A). Label each arrangement by its meaning,
 // treat the N/A placeholder as no-mode, and call any real driver a Pick Up / Delivery. Both legs recognize all
 // four tokens (a pickup leg can legitimately hold "CUSTOMER PICKUP"); only `driverLabel` differs per leg.
+// ⚠ KEEP IN SYNC with fcr-dispatch ARRANGEMENT_KEYS (src/lib/drivers.ts), the WRITE-path source of truth: if a
+// token is added or re-spelled there, add/adjust the pattern here, else that value falls through to the driver
+// branch and a customer-arranged leg renders as a phantom Pick Up/Delivery (the class fixed in ee17744). ILIKE
+// substring matching absorbs casing/spacing drift; a genuinely new token or spelling is not absorbed.
 // `col` is a TRUSTED, qualified column reference (never user input), matching the computed() contract.
 export const driverModeExpr = (col, driverLabel) => `CASE WHEN ${col} ILIKE '%customer drop off%' THEN 'Customer Drop Off' ` +
     `WHEN ${col} ILIKE '%customer pickup%' THEN 'Customer Pickup' ` +
