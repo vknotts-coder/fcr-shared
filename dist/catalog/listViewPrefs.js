@@ -93,6 +93,18 @@ export async function saveListViewPref(db, accountId, objectKey, viewSlug, colum
     }
     // Store the bare array when nothing is hidden (identical to Track B's reorder-only rows), else the
     // { order, hidden } object. Both are valid jsonb; `normalizeArrangement` reads either back.
+    //
+    // ⚠ CROSS-VERSION ROLLOUT HAZARD (Track C, #402). @fcr/core ships as immutable per-SHA tarballs and each
+    // consuming app pins its own SHA, so apps do NOT upgrade atomically while they all read the SAME shared
+    // `list_view_pref` rows. A pre-0.39.0 reader runs the old `sanitizeColumns` directly on `r.columns`, which
+    // returns [] for any non-array — so the instant an upgraded app stores a HIDE (the object form), an older
+    // reader of that row sees empty columns and silently falls back to the view's default (and a re-save from
+    // the old app would drop `hidden` entirely). A reorder-only save (bare array) stays fully back-readable.
+    // RULE: every app that READS this table must be on @fcr/core >= 0.39.0 before Track C hide-saves are
+    // enabled for it. Today the only reader is fcr-trailers, which repins to >= 0.39.0 in the same slice (C3)
+    // that turns on hide — so no mixed-version window exists; the residual risk is a rollback to an older pin.
+    // If a future rollout needs old readers to tolerate hides, make the shape forward-tolerant (keep `columns`
+    // a bare array, carry `hidden` in a separate additive column) instead of relaxing this rule.
     const stored = hidden.length === 0 ? order : { order, hidden };
     const { rows } = await db.query(`INSERT INTO fcr_core.list_view_pref (owner_account_id, object_key, view_slug, columns)
      VALUES ($1, $2, $3, $4::jsonb)
@@ -161,15 +173,9 @@ export function mergeColumnOrder(catalogColumns, savedOrder) {
  * `arrangement` is the full ordered set with per-column hidden flags, for a show/hide UI.
  */
 export function resolveColumns(available, pref, opts) {
-    // De-dupe available defensively, preserving first-seen order (the caller's effective column set).
-    const avail = [];
-    const availSet = new Set();
-    for (const key of available) {
-        if (!availSet.has(key)) {
-            availSet.add(key);
-            avail.push(key);
-        }
-    }
+    // De-dupe available defensively, preserving first-seen order (Set iteration order IS insertion order).
+    const availSet = new Set(available);
+    const avail = [...availSet];
     const lock = Math.min(Math.max(0, opts?.lockedLeading ?? 0), avail.length);
     const lockedKeys = avail.slice(0, lock);
     const { order, hidden } = normalizeArrangement(pref);
