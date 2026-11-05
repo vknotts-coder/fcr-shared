@@ -5,7 +5,7 @@
 // this seeds the initial status from the pickup arrangement and stamps status_date on a manual
 // status change, nothing more. Columns verified against fcr-dispatch db/fcr_core.schema.sql.
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
+import { isBlank, makeChanged, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
@@ -95,10 +95,9 @@ export function applyTruckStatusEngine(before, edits, opts = {}) {
 export function validateTruck(state, opts = {}) {
     const errors = [];
     const status = state.status;
-    // A field rule that runs over the MERGED before-image must scope itself to the fields the edit actually
-    // CHANGED, or an unchanged legacy value freezes edits to unrelated fields. On create (no before) every field
-    // counts as changed. Shared by the estimator_name and Awaiting-Pickup rules below.
-    const changed = (fields) => !opts.before || fields.some((f) => state[f] !== opts.before[f]);
+    // Scope each merged-before-image rule to the fields the edit CHANGED (see makeChanged). Used by the
+    // estimator_name and Awaiting-Pickup rules below.
+    const changed = makeChanged(state, opts.before);
     // VIN fits the fcr_core.truck.vin column (varchar 17) — reject over-length as a friendly error
     // rather than letting the INSERT overflow and 500.
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
