@@ -5,7 +5,7 @@
 // internalized so the module carries no fcr-trailers import.
 
 import { today } from "../../reports/dates.js";
-import { isBlank, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
+import { isBlank, makeChanged, US_STATES, VIN_MAX_LENGTH, YES_NO } from "../coerce.js";
 import type { EngineResult, FormField, IntakeSpec, ValidationError } from "../types.js";
 
 // The two special pickup/delivery "driver" values the SF validation rules key on.
@@ -273,12 +273,9 @@ export function validateTrailer(
   const errors: ValidationError[] = [];
   const status = state.status;
 
-  // A status-coupling rule that runs over the MERGED before-image must scope itself to the fields the edit
-  // actually CHANGED, or an unchanged LEGACY value freezes edits to unrelated fields — the same class of bug
-  // fixed for trucks in validateTruck (#41). updateUnit validates the merged state, and a trailer sitting at
-  // e.g. "Awaiting Pickup"/"Repair Complete" with a missing coupled field would otherwise reject an edit to
-  // any other field with no way to satisfy it. On create (no before) every field counts as changed.
-  const changed = (fields: string[]): boolean => !opts.before || fields.some((f) => state[f] !== opts.before![f]);
+  // Scope each merged-before-image status-coupling rule to the fields the edit CHANGED (see makeChanged) —
+  // the same class of bug fixed for trucks in validateTruck (#41).
+  const changed = makeChanged(state, opts.before);
 
   // VIN fits the fcr_core.trailer.full_vin column (varchar 17) — reject over-length as a friendly
   // error rather than letting the INSERT overflow and 500.

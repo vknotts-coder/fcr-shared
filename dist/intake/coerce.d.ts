@@ -1,6 +1,13 @@
 import type { FormField } from "./types.js";
 /** True for null/undefined or an all-whitespace string — one definition of "empty field". */
 export declare function isBlank(v: unknown): boolean;
+/** A field rule that runs over the MERGED before-image must scope itself to the fields the edit actually
+ *  CHANGED, or an unchanged LEGACY value freezes edits to unrelated fields. `updateUnit` validates the merged
+ *  state (before + edits), so e.g. a truck/trailer sitting at "Awaiting Pickup" with a missing coupled field
+ *  would otherwise reject an edit to any other field with no way to satisfy it. Returns a predicate: a rule
+ *  guards itself with `changed([...the fields it couples])`. On create (no before) every field counts as
+ *  changed. One definition shared by validateTruck + validateTrailer so the scoping can't drift. */
+export declare function makeChanged(state: Record<string, unknown>, before: Record<string, unknown> | undefined): (fields: string[]) => boolean;
 /** Max VIN length — the fcr_core truck.vin / trailer.full_vin columns are varchar(17). A longer
  *  value would overflow the column and 500 the create; the specs reject it as a friendly error. */
 export declare const VIN_MAX_LENGTH = 17;
