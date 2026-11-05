@@ -9,6 +9,7 @@ export declare function applyTrailerStatusEngine(before: Record<string, unknown>
 }): EngineResult;
 export declare function validateTrailer(state: Record<string, unknown>, opts?: {
     isNew?: boolean;
+    before?: Record<string, unknown>;
 }): ValidationError[];
 export declare const trailerSpec: IntakeSpec;
 //# sourceMappingURL=trailer.d.ts.map

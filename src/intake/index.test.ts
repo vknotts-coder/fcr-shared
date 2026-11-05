@@ -138,6 +138,30 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     const merged2 = { ...before, rework: false };
     expect(validateTruck(merged2, { isNew: false, before }).some((e) => e.field === "pickup_street_address")).toBe(false);
   });
+  it("trailer: status-coupling rules still fire when the coupling is newly violated", () => {
+    const err = (field: string, state: Record<string, unknown>, opts: { isNew?: boolean; before?: Record<string, unknown> }) =>
+      validateTrailer(state, opts).some((e) => e.field === field);
+    // CREATE into Awaiting Pickup, no address, not a drop-off → refused
+    expect(err("pickup_address", { status: "Awaiting Pickup" }, { isNew: true })).toBe(true);
+    // EDIT changing status INTO Awaiting Pickup with no stored address → refused (status changed)
+    expect(err("pickup_address", { status: "Awaiting Pickup" }, { isNew: false, before: { status: "Received" } })).toBe(true);
+    // EDIT clearing the address while status stays Awaiting Pickup → refused (address changed)
+    expect(err("pickup_address", { status: "Awaiting Pickup", pickup_city: "" }, { isNew: false, before: { status: "Awaiting Pickup", pickup_city: "Livingston" } })).toBe(true);
+    // a customer drop-off exempts it
+    expect(err("pickup_address", { status: "Awaiting Pickup", pickup_driver: "CUSTOMER DROP OFF" }, { isNew: true })).toBe(false);
+    // Repair Complete with no repair_start_date, on create → refused
+    expect(err("repair_start_date", { status: "Repair Complete" }, { isNew: true })).toBe(true);
+  });
+  it("trailer: a legacy row with a coupling gap does NOT freeze an unrelated edit (scoped to changed)", () => {
+    // A legacy trailer sits at "Awaiting Pickup" with no stored pickup address; the user edits only the VIN.
+    // The pickup-coupling fields are UNCHANGED → the Awaiting-Pickup rule must not fire.
+    const awp = { status: "Awaiting Pickup" };
+    expect(validateTrailer({ ...awp, full_vin: "1GR1A0625ME306619" }, { isNew: false, before: awp }).some((e) => e.field === "pickup_address")).toBe(false);
+    // A legacy trailer at "Repair Complete" with no repair_start_date; editing only pickup_city must not be
+    // frozen by the repair-start rule (status + repair_start_date unchanged).
+    const rc = { status: "Repair Complete" };
+    expect(validateTrailer({ ...rc, pickup_city: "Sparta" }, { isNew: false, before: rc }).some((e) => e.field === "repair_start_date")).toBe(false);
+  });
   it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
     const { db, calls } = fakeDb((text) => {
       if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };

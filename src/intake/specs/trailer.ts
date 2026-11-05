@@ -268,10 +268,17 @@ function applyCompletionAndRework(
 // ── Validation (SF VRs §5) ────────────────────────────────────────────────────────
 export function validateTrailer(
   state: Record<string, unknown>,
-  opts: { isNew?: boolean } = {},
+  opts: { isNew?: boolean; before?: Record<string, unknown> } = {},
 ): ValidationError[] {
   const errors: ValidationError[] = [];
   const status = state.status;
+
+  // A status-coupling rule that runs over the MERGED before-image must scope itself to the fields the edit
+  // actually CHANGED, or an unchanged LEGACY value freezes edits to unrelated fields — the same class of bug
+  // fixed for trucks in validateTruck (#41). updateUnit validates the merged state, and a trailer sitting at
+  // e.g. "Awaiting Pickup"/"Repair Complete" with a missing coupled field would otherwise reject an edit to
+  // any other field with no way to satisfy it. On create (no before) every field counts as changed.
+  const changed = (fields: string[]): boolean => !opts.before || fields.some((f) => state[f] !== opts.before![f]);
 
   // VIN fits the fcr_core.trailer.full_vin column (varchar 17) — reject over-length as a friendly
   // error rather than letting the INSERT overflow and 500.
@@ -280,6 +287,7 @@ export function validateTrailer(
   }
 
   if (
+    changed(["status", "pickup_driver", "pickup_address", "pickup_city", "pickup_state", "pickup_zip_code"]) &&
     status === "Awaiting Pickup" &&
     state.pickup_driver !== CUSTOMER_DROP_OFF &&
     ["pickup_address", "pickup_city", "pickup_state", "pickup_zip_code"].every((f) => isBlank(state[f]))
@@ -287,15 +295,16 @@ export function validateTrailer(
     errors.push({ field: "pickup_address", message: "Status can not be Awaiting Pickup unless there is a pickup address or this is a customer drop off." });
   }
   if (
+    changed(["status", "delivery_address", "delivery_city", "delivery_state", "delivery_zip_code"]) &&
     status === "Awaiting Delivery" &&
     ["delivery_address", "delivery_city", "delivery_state", "delivery_zip_code"].every((f) => isBlank(state[f]))
   ) {
     errors.push({ field: "delivery_address", message: "Status can not be Awaiting Delivery unless there is a delivery address." });
   }
-  if (status === "Repair Complete" && isBlank(state.repair_start_date)) {
+  if (changed(["status", "repair_start_date"]) && status === "Repair Complete" && isBlank(state.repair_start_date)) {
     errors.push({ field: "repair_start_date", message: "Status can not be Repair Complete if there was never a Repair Start Date entered." });
   }
-  if (status === "Awaiting Customer Pickup" && state.delivery_driver !== CUSTOMER_PICKUP) {
+  if (changed(["status", "delivery_driver"]) && status === "Awaiting Customer Pickup" && state.delivery_driver !== CUSTOMER_PICKUP) {
     errors.push({ field: "delivery_driver", message: "Status can not be Awaiting Customer Pickup unless Delivery Driver is set to CUSTOMER PICKUP." });
   }
   // Rework coupling (§924, Van 2026-09-16) — the rework flag and the REWORK status must agree.
@@ -305,7 +314,7 @@ export function validateTrailer(
   //    (not blank) so a legacy/SF-synced null doesn't trip it — only an explicit clear.
   //  - CREATE: a new unit can't be born in rework with a non-REWORK status (the create form hides the
   //    rework fields, but a non-UI submit would otherwise merge rework=true straight through).
-  if (status === "REWORK" && state.rework === false) {
+  if (changed(["status", "rework"]) && status === "REWORK" && state.rework === false) {
     errors.push({ field: "rework", message: "Rework can not be cleared while the status is REWORK — change the status first." });
   }
   if (opts.isNew && state.rework === true && status !== "REWORK") {
