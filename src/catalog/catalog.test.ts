@@ -80,6 +80,14 @@ describe("truck object", () => {
     // total_estimated_hours now includes the Body_S component (exact SF match)
     expect(byKey.get("total_estimated_hours")?.expr).toContain("truck.body_s_hours");
   });
+
+  it("exposes pickup_tow_drive + delivery_tow_drive as the pickup/delivery 'mode' columns", () => {
+    const byKey = new Map(truckFields.map((f) => [f.key, f]));
+    expect(byKey.get("pickup_tow_drive")?.label).toBe("Pickup mode");
+    expect(byKey.get("pickup_tow_drive")?.path).toBe("pickup_tow_drive");
+    expect(byKey.get("delivery_tow_drive")?.label).toBe("Delivery mode");
+    expect(byKey.get("delivery_tow_drive")?.path).toBe("delivery_tow_drive");
+  });
 });
 
 describe("trailer object", () => {
@@ -115,6 +123,21 @@ describe("trailer object", () => {
     expect(dpd.summable).toBe(false);
     expect(byKey.get("days_in_status")?.expr).toContain("status_date");
     expect(byKey.get("days_in_status")?.path).toBeUndefined();
+  });
+
+  it("derives pickup_mode/delivery_mode from the driver fields (computed — trailers have no tow/drive column)", () => {
+    const byKey = new Map(trailerFields.map((f) => [f.key, f]));
+    const pm = byKey.get("pickup_mode")!;
+    expect(pm.path).toBeUndefined();
+    expect(pm.type).toBe("string");
+    expect(pm.expr).toContain("pickup_driver");
+    expect(pm.expr).toContain("Customer Drop Off");
+    expect(pm.expr).toContain("Pick Up");
+    const dm = byKey.get("delivery_mode")!;
+    expect(dm.path).toBeUndefined();
+    expect(dm.expr).toContain("delivery_driver");
+    expect(dm.expr).toContain("Customer Pickup");
+    expect(dm.expr).toContain("Delivery");
   });
 
   it("surfaces the SF report-parity columns (#26) with correct types", () => {

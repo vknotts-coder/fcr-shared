@@ -29,6 +29,13 @@ export const trailerFields: RegistryField[] = [
   dateF("invoice_paid_date", "Invoice paid", "status"),
   // Pickup leg (trailer: pickup_dispatch_date, pickup_eta; no per-trip miles)
   str("pickup_driver", "Pickup driver", "pickup"),
+  // Trailers have no tow/drive column (trucks do); derive a pickup "mode" from pickup_driver: the customer
+  // drops it off, else a driver picks it up (Van 2026-11-05). Check the customer-drop-off token first since it
+  // also makes pickup_driver "present".
+  computed("string", "pickup_mode", "Pickup mode", "pickup",
+    `CASE WHEN trailer.pickup_driver ILIKE '%customer drop off%' THEN 'Customer Drop Off' ` +
+    `WHEN NULLIF(btrim(trailer.pickup_driver), '') IS NOT NULL THEN 'Pick Up' END`,
+    { filterable: true, groupable: true }),
   str("pickup_location_name", "Pickup location", "pickup"),
   str("pickup_city", "Pickup city", "pickup"),
   str("pickup_state", "Pickup state", "pickup"),
@@ -36,6 +43,12 @@ export const trailerFields: RegistryField[] = [
   dateF("pickup_eta", "Pickup ETA", "pickup"),
   // Delivery leg (no delivery_location_name / per-trip miles on trailer)
   str("delivery_driver", "Delivery driver", "delivery"),
+  // Delivery "mode" derived from delivery_driver (trailers have no tow/drive column): the customer picks it
+  // up, else a driver delivers it (Van 2026-11-05). Customer-pickup token checked first.
+  computed("string", "delivery_mode", "Delivery mode", "delivery",
+    `CASE WHEN trailer.delivery_driver ILIKE '%customer pickup%' THEN 'Customer Pickup' ` +
+    `WHEN NULLIF(btrim(trailer.delivery_driver), '') IS NOT NULL THEN 'Delivery' END`,
+    { filterable: true, groupable: true }),
   str("delivery_city", "Delivery city", "delivery"),
   str("delivery_state", "Delivery state", "delivery"),
   dateF("delivery_eta", "Delivery ETA", "delivery"),

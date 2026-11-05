@@ -30,6 +30,7 @@ export const truckFields = [
     dateF("invoice_paid_date", "Invoice paid", "status"),
     // Pickup leg
     str("pickup_driver", "Pickup driver", "pickup"),
+    str("pickup_tow_drive", "Pickup mode", "pickup"),
     str("pickup_location_name", "Pickup location", "pickup"),
     str("pickup_city", "Pickup city", "pickup"),
     str("pickup_state", "Pickup state", "pickup"),
