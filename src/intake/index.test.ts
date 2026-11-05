@@ -113,6 +113,31 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     // ...and changing it to a valid initial passes.
     expect(validateTruck({ estimator_name: "JR" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
   });
+  it("truck: Awaiting-Pickup-needs-address still fires when the coupling is newly violated", () => {
+    const addrErr = (state: Record<string, unknown>, opts: { isNew?: boolean; before?: Record<string, unknown> }) =>
+      validateTruck(state, opts).some((e) => e.field === "pickup_street_address");
+    // CREATE: status set to Awaiting Pickup with no address and not a drop-off → refused
+    expect(addrErr({ status: "Awaiting Pickup" }, { isNew: true })).toBe(true);
+    // EDIT changing status INTO Awaiting Pickup with no stored address → refused (status changed)
+    expect(addrErr({ status: "Awaiting Pickup" }, { isNew: false, before: { status: "Awaiting Pickup Info" } })).toBe(true);
+    // EDIT clearing the address while status stays Awaiting Pickup → refused (address changed)
+    expect(addrErr(
+      { status: "Awaiting Pickup", pickup_city: "" },
+      { isNew: false, before: { status: "Awaiting Pickup", pickup_city: "Livingston" } },
+    )).toBe(true);
+    // a drop-off exempts it even with no address
+    expect(addrErr({ status: "Awaiting Pickup", pickup_tow_drive: "Customer Drop Off" }, { isNew: true })).toBe(false);
+  });
+  it("truck: a legacy Awaiting-Pickup row with no address does NOT freeze an invoice/rework-only edit (scoped to changed)", () => {
+    // updateUnit validates the MERGED before-image. A legacy truck sits at "Awaiting Pickup" with no stored
+    // pickup address; the user edits only invoice_4. The coupling fields are UNCHANGED → the rule must not fire.
+    const before = { status: "Awaiting Pickup", invoice_4: "" };
+    const merged = { ...before, invoice_4: "INV-900" }; // status + address carried through unchanged
+    expect(validateTruck(merged, { isNew: false, before }).some((e) => e.field === "pickup_street_address")).toBe(false);
+    // a rework-only edit on the same legacy row is likewise not frozen
+    const merged2 = { ...before, rework: false };
+    expect(validateTruck(merged2, { isNew: false, before }).some((e) => e.field === "pickup_street_address")).toBe(false);
+  });
   it("createUnit blocks an over-length VIN before the INSERT (no 500)", async () => {
     const { db, calls } = fakeDb((text) => {
       if (text.startsWith("SELECT 1")) return { rows: [{ "?column?": 1 }] };
