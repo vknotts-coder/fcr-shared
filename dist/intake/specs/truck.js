@@ -109,7 +109,15 @@ export function validateTruck(state, opts = {}) {
         !ESTIMATOR_NAMES.includes(state.estimator_name)) {
         errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
     }
-    if (status === "Awaiting Pickup" &&
+    // Awaiting-Pickup requires a pickup address (or a customer drop-off). ⚠ Scope this to an edit that actually
+    // TOUCHES the coupling — status, pickup mode, or an address field — mirroring the estimator_name rule above.
+    // updateUnit validates the MERGED before-image, and legacy "Awaiting Pickup" rows can carry no stored address,
+    // so without this guard an edit to an unrelated field (e.g. an invoice number or the rework flag) on such a row
+    // is frozen with no way to satisfy it. On create (no before) every field is "changed".
+    const pickupCouplingFields = ["status", "pickup_tow_drive", "pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"];
+    const pickupCouplingChanged = !opts.before || pickupCouplingFields.some((f) => state[f] !== opts.before[f]);
+    if (pickupCouplingChanged &&
+        status === "Awaiting Pickup" &&
         state.pickup_tow_drive !== CUSTOMER_DROP_OFF_MODE &&
         ["pickup_street_address", "pickup_city", "pickup_state", "pickup_zip_code"].every((f) => isBlank(state[f]))) {
         errors.push({ field: "pickup_street_address", message: "Status can not be Awaiting Pickup unless there is a pickup address or this is a customer drop off." });
