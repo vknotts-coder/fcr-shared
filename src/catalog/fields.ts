@@ -69,3 +69,21 @@ export const computed = (
   summable: opts.summable ?? false,
   sensitive: opts.sensitive,
 });
+
+// TRUSTED SQL for a trailer transport "mode" derived from a free-text driver column — trailers have no
+// tow/drive column like trucks, so the mode is inferred from the driver field (interim; Van 2026-11-05). The
+// column holds either a real driver name or one of fcr-dispatch's customer-arrangement tokens (ARRANGEMENT_KEYS:
+// CUSTOMER DROP OFF / CUSTOMER PICKUP / ARRANGED BY CUSTOMER / N/A). Label each arrangement by its meaning,
+// treat the N/A placeholder as no-mode, and call any real driver a Pick Up / Delivery. Both legs recognize all
+// four tokens (a pickup leg can legitimately hold "CUSTOMER PICKUP"); only `driverLabel` differs per leg.
+// ⚠ KEEP IN SYNC with fcr-dispatch ARRANGEMENT_KEYS (src/lib/drivers.ts), the WRITE-path source of truth: if a
+// token is added or re-spelled there, add/adjust the pattern here, else that value falls through to the driver
+// branch and a customer-arranged leg renders as a phantom Pick Up/Delivery (the class fixed in ee17744). ILIKE
+// substring matching absorbs casing/spacing drift; a genuinely new token or spelling is not absorbed.
+// `col` is a TRUSTED, qualified column reference (never user input), matching the computed() contract.
+export const driverModeExpr = (col: string, driverLabel: "Pick Up" | "Delivery"): string =>
+  `CASE WHEN ${col} ILIKE '%customer drop off%' THEN 'Customer Drop Off' ` +
+  `WHEN ${col} ILIKE '%customer pickup%' THEN 'Customer Pickup' ` +
+  `WHEN ${col} ILIKE '%arranged by customer%' THEN 'Arranged by Customer' ` +
+  `WHEN upper(btrim(${col})) = 'N/A' THEN NULL ` +
+  `WHEN NULLIF(btrim(${col}), '') IS NOT NULL THEN '${driverLabel}' END`;

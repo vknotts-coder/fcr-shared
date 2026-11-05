@@ -22,4 +22,5 @@ export declare const computed: (type: FieldType, key: string, label: string, sec
     summable?: boolean;
     sensitive?: boolean;
 }) => RegistryField;
+export declare const driverModeExpr: (col: string, driverLabel: "Pick Up" | "Delivery") => string;
 //# sourceMappingURL=fields.d.ts.map

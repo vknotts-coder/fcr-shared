@@ -73,7 +73,7 @@ const TRAILER_TERMINAL = ["Delivered", "Total Loss", "Do Not Repair"];
 // (TRUCK_STATUSES / TRAILER_STATUSES — the SF Status__c picklists in pipeline order — now live in
 // status-order.ts and are imported above, so the dropdown options and the status sort rank share one array.)
 
-const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
+const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "pickup_tow_drive", "delivery_tow_drive", "notify_date", "arrival_date", "repair_goal", "customer_name", "contacts", "invoice_1"];
 // Truck "Repair Pipeline" columns (parity with TRAILER_PIPELINE_COLS, adapted to the truck schema: truck has
 // no `type`/`team`, so shop + team_leader stand in). Requires the computed day-count fields (truck.ts).
 const TRUCK_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "shop", "team_leader", "invoice_1", "days_past_due"];
@@ -84,7 +84,7 @@ const TRUCK_WIP_COLS = ["sf_name", "vin", "notify_date", "status", "shop", "repa
 const TRUCK_SCHEDULING_STATUSES = ["Approved", "Awaiting Parts", "Awaiting Repair Start"];
 // The fcr-trailers "Repair Pipeline" columns (parity with the old bespoke TrailerTable): unit, customer,
 // status, days-in-status, type, team, invoice #, days-past-due. Requires the computed day-count fields.
-const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "invoice_1", "days_past_due"];
+const TRAILER_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "pickup_mode", "delivery_mode", "invoice_1", "days_past_due"];
 // "Past Due" columns (Matt 2026-10-21: repair-overdue, not AR aging) — swap invoice #/days-past-due for the
 // repair goal + days-past-goal so the row shows WHY it's overdue.
 const TRAILER_PAST_DUE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "type", "team", "repair_goal", "days_past_goal"];
