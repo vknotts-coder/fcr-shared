@@ -138,6 +138,12 @@ describe("trailer object", () => {
     expect(dm.expr).toContain("delivery_driver");
     expect(dm.expr).toContain("Customer Pickup");
     expect(dm.expr).toContain("Delivery");
+    // Both legs handle every customer-arrangement token (so a customer-handled trailer is never mislabeled as a
+    // driver leg) and drop the N/A placeholder — mirrors fcr-dispatch ARRANGEMENT_KEYS.
+    for (const e of [pm.expr!, dm.expr!]) {
+      expect(e).toContain("arranged by customer");
+      expect(e).toMatch(/'N\/A'\s+THEN NULL/);
+    }
   });
 
   it("surfaces the SF report-parity columns (#26) with correct types", () => {
