@@ -62,7 +62,7 @@ export declare function authenticateOffice(pool: Queryable, args: {
     appKey: string;
 }): Promise<OfficeAuthResult>;
 export declare const PAIR_FAIL_THRESHOLD = 5;
-export declare const IP_FAIL_THRESHOLD = 20;
+export declare const IP_FAIL_THRESHOLD = 50;
 export declare const THROTTLE_BACKOFF_BASE_MS = 15000;
 export declare const THROTTLE_BACKOFF_CAP_MS: number;
 export declare const THROTTLE_WINDOW_MS: number;
@@ -91,10 +91,12 @@ export declare function recordLoginFailure(pool: Queryable, args: {
     username: string;
 }): Promise<void>;
 /**
- * Clear the (ip, username) PAIR throttle after a SUCCESSFUL login — the user proved
- * themselves, so their own backoff resets. The ip-scope counter is intentionally left
- * to decay via the window, so one good login can't wipe spray evidence spanning other
- * usernames from the same source.
+ * Relieve throttle state after a SUCCESSFUL login. The (ip, username) PAIR is cleared
+ * outright — the user proved themselves. The ip-scope counter is DECREMENTED by one
+ * (floor 0), and its lock lifted once it drops below the ceiling, so steady legitimate
+ * office traffic keeps a shared NAT's ip counter low (the self-DoS fix, #366 S6 review)
+ * WITHOUT a single lucky guess wiping all spray evidence — a burst of failures with no
+ * successes still climbs to the ceiling.
  */
 export declare function clearLoginThrottle(pool: Queryable, args: {
     ip: string;

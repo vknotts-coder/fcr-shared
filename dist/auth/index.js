@@ -151,8 +151,21 @@ export async function authenticateOffice(pool, args) {
 // computed SQL-side in one statement, so concurrent misses can't lose an update
 // (same discipline as authenticateOffice's atomic lockout). All columns app-owned,
 // no SF exposure. These constants are tunable security params (Van, 2026-11-06).
+//
+// ⚠ TRUSTED IP REQUIRED — the caller MUST pass a proxy-VERIFIED client IP (on Vercel:
+// the platform-set `x-vercel-forwarded-for`, or `ipAddress(request)` from
+// @vercel/functions / `request.ip`), NEVER a raw client-settable `X-Forwarded-For`/
+// `X-Real-Ip`. With a spoofable ip, every request lands in a unique bucket, `failed`
+// never climbs, and BOTH scopes become a silent no-op — total bypass. This is a HARD
+// contract on every consumer's login action (#366 S6 review).
 export const PAIR_FAIL_THRESHOLD = 5; // pair backoff begins after this many fails
-export const IP_FAIL_THRESHOLD = 20; // ip ceiling begins after this many fails (across usernames)
+// Raised 20 → 50 (#366 S6 review): an FCR office shares one NAT public IP, so the ip
+// ceiling must sit well ABOVE plausible concurrent legit fumbling or it becomes an
+// office-wide self-DoS. 50 fails inside the 1 h window from one source is spray, not
+// a few people mistyping; a successful login also relieves the ip counter (see
+// clearLoginThrottle). Still catches username-spray (per-account lockout handles
+// per-username brute force; this is the cross-username ceiling).
+export const IP_FAIL_THRESHOLD = 50; // ip ceiling begins after this many fails (across usernames)
 export const THROTTLE_BACKOFF_BASE_MS = 15_000; // first backoff step (×2 each step past the threshold)
 export const THROTTLE_BACKOFF_CAP_MS = 15 * 60_000; // max backoff (15 min)
 export const THROTTLE_WINDOW_MS = 60 * 60_000; // quiet period that resets a counter (1 h)
@@ -178,6 +191,13 @@ export async function checkLoginThrottle(pool, args) {
 // and set the exponential-backoff lock once the count reaches the threshold — all in
 // ONE statement so N concurrent misses advance the counter by N. In ON CONFLICT DO
 // UPDATE the existing row is referenced by the unqualified relation name.
+//
+// ⚠ The "next count" expression (`CASE WHEN window-elapsed THEN 1 ELSE failed+1 END`)
+// appears THREE times below — once for `failed`, twice inside `locked_until`. Postgres
+// can't reference one SET target's new value from another in ON CONFLICT DO UPDATE, so
+// they can't be deduped; if the decay rule changes, edit all three in lockstep.
+// The backoff EXPONENT is clamped (LEAST(…, 30)) — NOT just the result — so `power(2,…)`
+// can't overflow float8 on a long-attacked key (2^30 × base already dwarfs the cap).
 async function bumpThrottle(pool, scope, key, threshold) {
     await pool.query(`INSERT INTO fcr_core.auth_throttle (scope, key, failed, first_at, last_at, locked_until)
      VALUES ($1, $2, 1, now(), now(), NULL)
@@ -189,8 +209,8 @@ async function bumpThrottle(pool, scope, key, threshold) {
          WHEN (CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
                     THEN 1 ELSE auth_throttle.failed + 1 END) >= $3
          THEN now() + (LEAST($5::float8,
-                $4::float8 * power(2, (CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
-                                            THEN 1 ELSE auth_throttle.failed + 1 END) - $3)) || ' milliseconds')::interval
+                $4::float8 * power(2, LEAST((CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
+                                            THEN 1 ELSE auth_throttle.failed + 1 END) - $3, 30))) || ' milliseconds')::interval
          ELSE NULL END`, [scope, key, threshold, THROTTLE_BACKOFF_BASE_MS, THROTTLE_BACKOFF_CAP_MS, THROTTLE_WINDOW_MS]);
 }
 /**
@@ -204,11 +224,19 @@ export async function recordLoginFailure(pool, args) {
     await bumpThrottle(pool, "ip", ip, IP_FAIL_THRESHOLD);
 }
 /**
- * Clear the (ip, username) PAIR throttle after a SUCCESSFUL login — the user proved
- * themselves, so their own backoff resets. The ip-scope counter is intentionally left
- * to decay via the window, so one good login can't wipe spray evidence spanning other
- * usernames from the same source.
+ * Relieve throttle state after a SUCCESSFUL login. The (ip, username) PAIR is cleared
+ * outright — the user proved themselves. The ip-scope counter is DECREMENTED by one
+ * (floor 0), and its lock lifted once it drops below the ceiling, so steady legitimate
+ * office traffic keeps a shared NAT's ip counter low (the self-DoS fix, #366 S6 review)
+ * WITHOUT a single lucky guess wiping all spray evidence — a burst of failures with no
+ * successes still climbs to the ceiling.
  */
 export async function clearLoginThrottle(pool, args) {
-    await pool.query(`DELETE FROM fcr_core.auth_throttle WHERE scope = 'pair' AND key = $1`, [pairKey(args.ip || "", args.username)]);
+    const ip = args.ip || "";
+    await pool.query(`DELETE FROM fcr_core.auth_throttle WHERE scope = 'pair' AND key = $1`, [pairKey(ip, args.username)]);
+    await pool.query(`UPDATE fcr_core.auth_throttle
+        SET failed = GREATEST(0, failed - 1),
+            locked_until = CASE WHEN GREATEST(0, failed - 1) < $2 THEN NULL ELSE locked_until END,
+            last_at = now()
+      WHERE scope = 'ip' AND key = $1`, [ip, IP_FAIL_THRESHOLD]);
 }
