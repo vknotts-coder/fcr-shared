@@ -61,4 +61,43 @@ export declare function authenticateOffice(pool: Queryable, args: {
     password: string;
     appKey: string;
 }): Promise<OfficeAuthResult>;
+export declare const PAIR_FAIL_THRESHOLD = 5;
+export declare const IP_FAIL_THRESHOLD = 20;
+export declare const THROTTLE_BACKOFF_BASE_MS = 15000;
+export declare const THROTTLE_BACKOFF_CAP_MS: number;
+export declare const THROTTLE_WINDOW_MS: number;
+export interface ThrottleResult {
+    allowed: boolean;
+    /** When !allowed, how long until the soonest lock (pair or ip) expires. */
+    retryAfterMs: number;
+}
+/**
+ * May this (ip, username) attempt a login right now? Reads BOTH scopes; blocked if
+ * EITHER is locked, returning the longest remaining lock. Pure read, no write. An
+ * empty/unknown ip collapses to the "" bucket, so a missing X-Forwarded-For can't
+ * silently bypass the ip ceiling. Call BEFORE verifying the password.
+ */
+export declare function checkLoginThrottle(pool: Queryable, args: {
+    ip: string;
+    username: string;
+}): Promise<ThrottleResult>;
+/**
+ * Record a failed login against BOTH scopes, applying exponential backoff once each
+ * passes its threshold. Call on an auth MISS (wrong password / invalid). Fire it even
+ * when the password was wrong for an unknown username, so spray is counted.
+ */
+export declare function recordLoginFailure(pool: Queryable, args: {
+    ip: string;
+    username: string;
+}): Promise<void>;
+/**
+ * Clear the (ip, username) PAIR throttle after a SUCCESSFUL login — the user proved
+ * themselves, so their own backoff resets. The ip-scope counter is intentionally left
+ * to decay via the window, so one good login can't wipe spray evidence spanning other
+ * usernames from the same source.
+ */
+export declare function clearLoginThrottle(pool: Queryable, args: {
+    ip: string;
+    username: string;
+}): Promise<void>;
 //# sourceMappingURL=index.d.ts.map

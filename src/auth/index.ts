@@ -202,3 +202,105 @@ export async function authenticateOffice(
     },
   };
 }
+
+// ── login SOURCE throttle (epic fcr-dispatch#366 S6) ─────────────────────────
+// Per-source rate-limiting + exponential backoff — the dimension the per-account
+// lockout above lacks. Backed by fcr_core.auth_throttle (created by the consuming
+// app's migration). The login ACTION (which has the request headers) reads the
+// source IP and calls these; authenticateOffice itself has no request context.
+//
+// Two scopes, both checked on every attempt:
+//   • "pair" — key = lower(username)+"|"+ip. SURGICAL: one user fumbling their own
+//     password on a shared office NAT does NOT throttle colleagues behind that IP.
+//   • "ip"   — key = ip. A higher CEILING catching username-SPRAY from one source
+//     (many usernames, each with too few pair-failures to trip the pair backoff).
+// Counters DECAY: a failure after THROTTLE_WINDOW_MS of quiet resets the counter to
+// 1, so a slow trickle never accumulates a lock. Backoff + the window reset are
+// computed SQL-side in one statement, so concurrent misses can't lose an update
+// (same discipline as authenticateOffice's atomic lockout). All columns app-owned,
+// no SF exposure. These constants are tunable security params (Van, 2026-11-06).
+
+export const PAIR_FAIL_THRESHOLD = 5; // pair backoff begins after this many fails
+export const IP_FAIL_THRESHOLD = 20; // ip ceiling begins after this many fails (across usernames)
+export const THROTTLE_BACKOFF_BASE_MS = 15_000; // first backoff step (×2 each step past the threshold)
+export const THROTTLE_BACKOFF_CAP_MS = 15 * 60_000; // max backoff (15 min)
+export const THROTTLE_WINDOW_MS = 60 * 60_000; // quiet period that resets a counter (1 h)
+
+export interface ThrottleResult {
+  allowed: boolean;
+  /** When !allowed, how long until the soonest lock (pair or ip) expires. */
+  retryAfterMs: number;
+}
+
+function pairKey(ip: string, username: string): string {
+  return `${username.trim().toLowerCase()}|${ip}`;
+}
+
+/**
+ * May this (ip, username) attempt a login right now? Reads BOTH scopes; blocked if
+ * EITHER is locked, returning the longest remaining lock. Pure read, no write. An
+ * empty/unknown ip collapses to the "" bucket, so a missing X-Forwarded-For can't
+ * silently bypass the ip ceiling. Call BEFORE verifying the password.
+ */
+export async function checkLoginThrottle(
+  pool: Queryable,
+  args: { ip: string; username: string },
+): Promise<ThrottleResult> {
+  const ip = args.ip || "";
+  const { rows } = await pool.query<{ ms: string | number | null }>(
+    `SELECT COALESCE(MAX(EXTRACT(epoch FROM (locked_until - now())) * 1000), 0) AS ms
+       FROM fcr_core.auth_throttle
+      WHERE locked_until IS NOT NULL AND locked_until > now()
+        AND ((scope = 'pair' AND key = $1) OR (scope = 'ip' AND key = $2))`,
+    [pairKey(ip, args.username), ip],
+  );
+  const ms = Number(rows[0]?.ms ?? 0);
+  return ms > 0 ? { allowed: false, retryAfterMs: ms } : { allowed: true, retryAfterMs: 0 };
+}
+
+// Atomic failure-bump for one scope/key: increment (or reset after the quiet window)
+// and set the exponential-backoff lock once the count reaches the threshold — all in
+// ONE statement so N concurrent misses advance the counter by N. In ON CONFLICT DO
+// UPDATE the existing row is referenced by the unqualified relation name.
+async function bumpThrottle(pool: Queryable, scope: "pair" | "ip", key: string, threshold: number): Promise<void> {
+  await pool.query(
+    `INSERT INTO fcr_core.auth_throttle (scope, key, failed, first_at, last_at, locked_until)
+     VALUES ($1, $2, 1, now(), now(), NULL)
+     ON CONFLICT (scope, key) DO UPDATE SET
+       failed = CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
+                     THEN 1 ELSE auth_throttle.failed + 1 END,
+       last_at = now(),
+       locked_until = CASE
+         WHEN (CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
+                    THEN 1 ELSE auth_throttle.failed + 1 END) >= $3
+         THEN now() + (LEAST($5::float8,
+                $4::float8 * power(2, (CASE WHEN now() - auth_throttle.last_at > ($6 || ' milliseconds')::interval
+                                            THEN 1 ELSE auth_throttle.failed + 1 END) - $3)) || ' milliseconds')::interval
+         ELSE NULL END`,
+    [scope, key, threshold, THROTTLE_BACKOFF_BASE_MS, THROTTLE_BACKOFF_CAP_MS, THROTTLE_WINDOW_MS],
+  );
+}
+
+/**
+ * Record a failed login against BOTH scopes, applying exponential backoff once each
+ * passes its threshold. Call on an auth MISS (wrong password / invalid). Fire it even
+ * when the password was wrong for an unknown username, so spray is counted.
+ */
+export async function recordLoginFailure(pool: Queryable, args: { ip: string; username: string }): Promise<void> {
+  const ip = args.ip || "";
+  await bumpThrottle(pool, "pair", pairKey(ip, args.username), PAIR_FAIL_THRESHOLD);
+  await bumpThrottle(pool, "ip", ip, IP_FAIL_THRESHOLD);
+}
+
+/**
+ * Clear the (ip, username) PAIR throttle after a SUCCESSFUL login — the user proved
+ * themselves, so their own backoff resets. The ip-scope counter is intentionally left
+ * to decay via the window, so one good login can't wipe spray evidence spanning other
+ * usernames from the same source.
+ */
+export async function clearLoginThrottle(pool: Queryable, args: { ip: string; username: string }): Promise<void> {
+  await pool.query(
+    `DELETE FROM fcr_core.auth_throttle WHERE scope = 'pair' AND key = $1`,
+    [pairKey(args.ip || "", args.username)],
+  );
+}
