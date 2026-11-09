@@ -77,7 +77,10 @@ describe("recordUnitFile", () => {
     await recordUnitFile(input({ purpose: "   ", filename: "../../etc/pa ss?.pdf" }), ACTOR, { db, verify });
     const { params } = db.calls[0]!;
     expect(params[7]).toBeNull();
-    expect(String(params[2])).not.toMatch(/[/?\\ ]/); // slashes/spaces/queries stripped
+    // Path/header-dangerous chars (slashes, query, backslash) still collapse to "_"; SPACES are now PRESERVED
+    // (#38 — the shop naming convention needs them). The space in "pa ss" survives; "../../etc/…?" is defanged.
+    expect(String(params[2])).not.toMatch(/[/?\\]/);
+    expect(String(params[2])).toBe(".._.._etc_pa ss_.pdf");
   });
 
   it("rejects an over-cap size BEFORE the blob lookup (size guard negative control)", async () => {
