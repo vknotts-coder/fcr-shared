@@ -29,7 +29,7 @@ Pin a **tag** (a released version), never a branch. Bump = a new tag here + bump
 - `@fcr/core/rbac` — the decision engine:
   - `can(principal, action, resourceType, opts)` — **pure, synchronous, zero I/O**. Deny-wins, default-deny.
   - `loadPrincipalGrants(pool, username)` — the DB seam. Takes an **injected** `{ query }` (node-postgres / `@neondatabase/serverless`-compatible), so this package has no DB-driver dependency. Each app wraps it in its own per-request memoization (e.g. `resolvePrincipal = cache(u => loadPrincipalGrants(pool(), u))`).
-  - `loadPrincipalGrantsById(pool, accountId)` — the **id-keyed twin** (same grant union, keyed on `account.id` not `username`). Use it where the principal must survive a username change — e.g. a session that stores `account.id`, so renaming the account does not detach its live authorization. An unknown/inactive id → default-deny, same as the by-username miss.
+  - `loadPrincipalGrantsById(pool, accountId)` — the **id-keyed twin** (same grant union, keyed on `account.id` not `username`). Use it where the principal must survive a username change — e.g. a session that stores `account.id`, so renaming the account does not detach its live authorization. An unknown/inactive/**malformed** id → default-deny (a non-UUID id short-circuits without a query), same as the by-username miss.
 
 ## Build
 

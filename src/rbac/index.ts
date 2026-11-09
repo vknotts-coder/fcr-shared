@@ -124,13 +124,24 @@ export async function loadPrincipalGrants(
  * {@link loadPrincipalGrants}, same grant union, only the WHERE differs. Use this where
  * the authz principal must survive a username change (e.g. a session that stores the
  * account id, so renaming the account does NOT detach its live authorization). An
- * unknown/inactive/deleted id → `{username: "", accountId: null, grants: []}`, i.e.
- * default-deny everywhere, exactly like the by-username miss. NO memoization (caller adds it).
+ * unknown/inactive/deleted/**malformed** id → `{username: "", accountId: null, grants: []}`,
+ * i.e. default-deny everywhere, exactly like the by-username miss — a non-UUID id
+ * short-circuits WITHOUT a query (it cannot match a uuid column). NO memoization (caller adds it).
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function loadPrincipalGrantsById(
   pool: Queryable,
   accountId: string,
 ): Promise<Principal> {
+  // Fail CLOSED on a malformed id without touching the DB. account.id is uuid, so the
+  // query below binds `$1::uuid`; a non-UUID value (a stale/tampered/legacy session
+  // cookie, a pre-migration id, cookie garbage) would make Postgres reject the bind
+  // (SQLSTATE 22P02) and this function THROW — contradicting the documented default-deny.
+  // Short-circuit to the same default-deny the DB miss returns, so the contract holds for
+  // EVERY caller, not only those that wrap the call in try/catch.
+  if (!UUID_RE.test(accountId)) return { username: "", accountId: null, grants: [] };
+
   const { rows } = await pool.query<GrantRow>(
     `SELECT ${GRANT_COLS}${GRANT_JOIN}
       WHERE a.id = $1::uuid AND a.deleted_at IS NULL AND a.active = TRUE`,
