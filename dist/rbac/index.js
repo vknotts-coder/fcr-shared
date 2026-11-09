@@ -14,33 +14,25 @@
 // (or the grant is the "*" wildcard), the grant's section/field are NULL (whole-
 // resource) or equal the checked ones, and the grant's scope is satisfied by the
 // resource context. v1 policy is section-level: all seeded permissions have field NULL.
-/**
- * Load a logged-in username's {@link Principal}: the account id and the full unioned
- * permission set across all the account's (non-deleted) assignments. Pure data access
- * over the injected `pool` — NO memoization (the caller adds that). An unknown/inactive
- * username → `{accountId: null, grants: []}`, i.e. default-deny everywhere.
- */
-export async function loadPrincipalGrants(pool, username) {
-    const { rows } = await pool.query(`SELECT a.id AS account_id,
-            p.resource_type, p.action, p.section, p.field, p.scope, p.effect,
-            asg.department_id, dept.shop_id
+/** The permission-union join, identical for both loaders — only the WHERE differs. The
+ *  per-app fcr_core SQL is centralized here by design (see the file header), so the two
+ *  sibling loaders share this SELECT rather than drifting. */
+const GRANT_JOIN = `
        FROM fcr_core.account a
        LEFT JOIN fcr_core.assignment      asg  ON asg.account_id = a.id      AND asg.deleted_at  IS NULL
        LEFT JOIN fcr_core.assignment_role ar   ON ar.assignment_id = asg.id
        LEFT JOIN fcr_core.role            r    ON r.id = ar.role_id          AND r.deleted_at    IS NULL
        LEFT JOIN fcr_core.permission      p    ON p.role_id = r.id           AND p.deleted_at    IS NULL
-       LEFT JOIN fcr_core.department      dept ON dept.id = asg.department_id AND dept.deleted_at IS NULL
-      WHERE lower(a.username) = lower($1) AND a.deleted_at IS NULL AND a.active = TRUE`, 
-    // Case-INSENSITIVE match, backed by a lower(username) functional unique index.
-    [username]);
-    const first = rows[0];
-    if (!first)
-        return { username, accountId: null, grants: [] };
-    const accountId = first.account_id;
-    const grants = rows
-        // A LEFT-JOIN row with no matched permission has ALL permission columns NULL; a
-        // matched one has them all present (permission.resource_type/action/scope/effect
-        // are NOT NULL), so testing one column is sufficient to drop the grant-less rows.
+       LEFT JOIN fcr_core.department      dept ON dept.id = asg.department_id AND dept.deleted_at IS NULL`;
+const GRANT_COLS = `a.id AS account_id, a.username,
+            p.resource_type, p.action, p.section, p.field, p.scope, p.effect,
+            asg.department_id, dept.shop_id`;
+/** Map the LEFT-JOIN rows to the camelCase grant list. A row with no matched permission
+ *  has ALL permission columns NULL; a matched one has them all present (permission.
+ *  resource_type/action/scope/effect are NOT NULL), so testing one column is sufficient
+ *  to drop the grant-less rows. Pure — shared by both loaders. */
+function mapGrants(rows) {
+    return rows
         .filter((r) => r.resource_type !== null)
         .map((r) => ({
         roleId: "", // not needed for evaluation; omit the join to role.id
@@ -53,7 +45,50 @@ export async function loadPrincipalGrants(pool, username) {
         departmentId: r.department_id,
         shopId: r.shop_id,
     }));
-    return { username, accountId, grants };
+}
+/**
+ * Load a logged-in username's {@link Principal}: the account id and the full unioned
+ * permission set across all the account's (non-deleted) assignments. Pure data access
+ * over the injected `pool` — NO memoization (the caller adds that). An unknown/inactive
+ * username → `{accountId: null, grants: []}`, i.e. default-deny everywhere.
+ */
+export async function loadPrincipalGrants(pool, username) {
+    const { rows } = await pool.query(`SELECT ${GRANT_COLS}${GRANT_JOIN}
+      WHERE lower(a.username) = lower($1) AND a.deleted_at IS NULL AND a.active = TRUE`, 
+    // Case-INSENSITIVE match, backed by a lower(username) functional unique index.
+    [username]);
+    const first = rows[0];
+    if (!first)
+        return { username, accountId: null, grants: [] };
+    // Echo the CALLER's username (unchanged behavior), not the stored casing.
+    return { username, accountId: first.account_id, grants: mapGrants(rows) };
+}
+/**
+ * Load a principal by stable {@link fcr_core.account} **id** — the id-keyed twin of
+ * {@link loadPrincipalGrants}, same grant union, only the WHERE differs. Use this where
+ * the authz principal must survive a username change (e.g. a session that stores the
+ * account id, so renaming the account does NOT detach its live authorization). An
+ * unknown/inactive/deleted/**malformed** id → `{username: "", accountId: null, grants: []}`,
+ * i.e. default-deny everywhere, exactly like the by-username miss — a non-UUID id
+ * short-circuits WITHOUT a query (it cannot match a uuid column). NO memoization (caller adds it).
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export async function loadPrincipalGrantsById(pool, accountId) {
+    // Fail CLOSED on a malformed id without touching the DB. account.id is uuid, so the
+    // query below binds `$1::uuid`; a non-UUID value (a stale/tampered/legacy session
+    // cookie, a pre-migration id, cookie garbage) would make Postgres reject the bind
+    // (SQLSTATE 22P02) and this function THROW — contradicting the documented default-deny.
+    // Short-circuit to the same default-deny the DB miss returns, so the contract holds for
+    // EVERY caller, not only those that wrap the call in try/catch.
+    if (!UUID_RE.test(accountId))
+        return { username: "", accountId: null, grants: [] };
+    const { rows } = await pool.query(`SELECT ${GRANT_COLS}${GRANT_JOIN}
+      WHERE a.id = $1::uuid AND a.deleted_at IS NULL AND a.active = TRUE`, [accountId]);
+    const first = rows[0];
+    if (!first)
+        return { username: "", accountId: null, grants: [] };
+    // Carry the STORED username (the id is authoritative; the name may have just changed).
+    return { username: first.username ?? "", accountId: first.account_id, grants: mapGrants(rows) };
 }
 function scopeSatisfied(g, opts, principal) {
     const res = opts.resource;

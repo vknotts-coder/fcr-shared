@@ -29,6 +29,7 @@ export interface TxRunner {
  * username → `{accountId: null, grants: []}`, i.e. default-deny everywhere.
  */
 export declare function loadPrincipalGrants(pool: Queryable, username: string): Promise<Principal>;
+export declare function loadPrincipalGrantsById(pool: Queryable, accountId: string): Promise<Principal>;
 /**
  * Decide whether `principal` may `action` on `resourceType`. Pure + synchronous over
  * the principal's already-loaded grants. Pass `opts.section`/`opts.field` to check a
