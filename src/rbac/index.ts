@@ -50,6 +50,7 @@ export interface TxRunner {
 
 interface GrantRow {
   account_id: string;
+  username: string | null; // selected by the by-id loader; unused by the by-username one
   resource_type: string | null;
   action: string | null;
   section: string | null;
@@ -58,6 +59,41 @@ interface GrantRow {
   effect: Effect | null;
   department_id: string | null;
   shop_id: string | null;
+}
+
+/** The permission-union join, identical for both loaders — only the WHERE differs. The
+ *  per-app fcr_core SQL is centralized here by design (see the file header), so the two
+ *  sibling loaders share this SELECT rather than drifting. */
+const GRANT_JOIN = `
+       FROM fcr_core.account a
+       LEFT JOIN fcr_core.assignment      asg  ON asg.account_id = a.id      AND asg.deleted_at  IS NULL
+       LEFT JOIN fcr_core.assignment_role ar   ON ar.assignment_id = asg.id
+       LEFT JOIN fcr_core.role            r    ON r.id = ar.role_id          AND r.deleted_at    IS NULL
+       LEFT JOIN fcr_core.permission      p    ON p.role_id = r.id           AND p.deleted_at    IS NULL
+       LEFT JOIN fcr_core.department      dept ON dept.id = asg.department_id AND dept.deleted_at IS NULL`;
+
+const GRANT_COLS = `a.id AS account_id, a.username,
+            p.resource_type, p.action, p.section, p.field, p.scope, p.effect,
+            asg.department_id, dept.shop_id`;
+
+/** Map the LEFT-JOIN rows to the camelCase grant list. A row with no matched permission
+ *  has ALL permission columns NULL; a matched one has them all present (permission.
+ *  resource_type/action/scope/effect are NOT NULL), so testing one column is sufficient
+ *  to drop the grant-less rows. Pure — shared by both loaders. */
+function mapGrants(rows: GrantRow[]): GrantedPermission[] {
+  return rows
+    .filter((r) => r.resource_type !== null)
+    .map((r) => ({
+      roleId: "", // not needed for evaluation; omit the join to role.id
+      resourceType: r.resource_type as string,
+      action: r.action as string,
+      section: r.section,
+      field: r.field,
+      scope: r.scope as Scope,
+      effect: r.effect as Effect,
+      departmentId: r.department_id,
+      shopId: r.shop_id,
+    }));
 }
 
 /**
@@ -71,15 +107,7 @@ export async function loadPrincipalGrants(
   username: string,
 ): Promise<Principal> {
   const { rows } = await pool.query<GrantRow>(
-    `SELECT a.id AS account_id,
-            p.resource_type, p.action, p.section, p.field, p.scope, p.effect,
-            asg.department_id, dept.shop_id
-       FROM fcr_core.account a
-       LEFT JOIN fcr_core.assignment      asg  ON asg.account_id = a.id      AND asg.deleted_at  IS NULL
-       LEFT JOIN fcr_core.assignment_role ar   ON ar.assignment_id = asg.id
-       LEFT JOIN fcr_core.role            r    ON r.id = ar.role_id          AND r.deleted_at    IS NULL
-       LEFT JOIN fcr_core.permission      p    ON p.role_id = r.id           AND p.deleted_at    IS NULL
-       LEFT JOIN fcr_core.department      dept ON dept.id = asg.department_id AND dept.deleted_at IS NULL
+    `SELECT ${GRANT_COLS}${GRANT_JOIN}
       WHERE lower(a.username) = lower($1) AND a.deleted_at IS NULL AND a.active = TRUE`,
     // Case-INSENSITIVE match, backed by a lower(username) functional unique index.
     [username],
@@ -87,26 +115,32 @@ export async function loadPrincipalGrants(
 
   const first = rows[0];
   if (!first) return { username, accountId: null, grants: [] };
+  // Echo the CALLER's username (unchanged behavior), not the stored casing.
+  return { username, accountId: first.account_id, grants: mapGrants(rows) };
+}
 
-  const accountId = first.account_id;
-  const grants: GrantedPermission[] = rows
-    // A LEFT-JOIN row with no matched permission has ALL permission columns NULL; a
-    // matched one has them all present (permission.resource_type/action/scope/effect
-    // are NOT NULL), so testing one column is sufficient to drop the grant-less rows.
-    .filter((r) => r.resource_type !== null)
-    .map((r) => ({
-      roleId: "", // not needed for evaluation; omit the join to role.id
-      resourceType: r.resource_type as string,
-      action: r.action as string,
-      section: r.section,
-      field: r.field,
-      scope: r.scope as Scope,
-      effect: r.effect as Effect,
-      departmentId: r.department_id,
-      shopId: r.shop_id,
-    }));
+/**
+ * Load a principal by stable {@link fcr_core.account} **id** — the id-keyed twin of
+ * {@link loadPrincipalGrants}, same grant union, only the WHERE differs. Use this where
+ * the authz principal must survive a username change (e.g. a session that stores the
+ * account id, so renaming the account does NOT detach its live authorization). An
+ * unknown/inactive/deleted id → `{username: "", accountId: null, grants: []}`, i.e.
+ * default-deny everywhere, exactly like the by-username miss. NO memoization (caller adds it).
+ */
+export async function loadPrincipalGrantsById(
+  pool: Queryable,
+  accountId: string,
+): Promise<Principal> {
+  const { rows } = await pool.query<GrantRow>(
+    `SELECT ${GRANT_COLS}${GRANT_JOIN}
+      WHERE a.id = $1::uuid AND a.deleted_at IS NULL AND a.active = TRUE`,
+    [accountId],
+  );
 
-  return { username, accountId, grants };
+  const first = rows[0];
+  if (!first) return { username: "", accountId: null, grants: [] };
+  // Carry the STORED username (the id is authoritative; the name may have just changed).
+  return { username: first.username ?? "", accountId: first.account_id, grants: mapGrants(rows) };
 }
 
 function scopeSatisfied(g: GrantedPermission, opts: CanOptions, principal: Principal): boolean {

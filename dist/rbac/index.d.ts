@@ -30,6 +30,15 @@ export interface TxRunner {
  */
 export declare function loadPrincipalGrants(pool: Queryable, username: string): Promise<Principal>;
 /**
+ * Load a principal by stable {@link fcr_core.account} **id** — the id-keyed twin of
+ * {@link loadPrincipalGrants}, same grant union, only the WHERE differs. Use this where
+ * the authz principal must survive a username change (e.g. a session that stores the
+ * account id, so renaming the account does NOT detach its live authorization). An
+ * unknown/inactive/deleted id → `{username: "", accountId: null, grants: []}`, i.e.
+ * default-deny everywhere, exactly like the by-username miss. NO memoization (caller adds it).
+ */
+export declare function loadPrincipalGrantsById(pool: Queryable, accountId: string): Promise<Principal>;
+/**
  * Decide whether `principal` may `action` on `resourceType`. Pure + synchronous over
  * the principal's already-loaded grants. Pass `opts.section`/`opts.field` to check a
  * narrower target, and `opts.resource` for a scoped (department/shop/self) check.
