@@ -61,6 +61,48 @@ export function passwordMeetsPolicy(password) {
     return password.length >= PASSWORD_MIN_LENGTH;
 }
 /**
+ * Write one authentication event. AWAITED (one DB round-trip per outcome) but
+ * error-SWALLOWED: auditing is best-effort and login is critical-path, so an audit-write
+ * failure can never block or fail a login. (This is the module's ONLY swallowed write —
+ * the failed_attempts/lockout counters deliberately propagate, fail-closed; the swallow
+ * here is justified by audit being best-effort, not by any counter-write precedent.)
+ *
+ * Observability: the deploy-before-migration window (undefined_table `42P01`) is EXPECTED
+ * and swallowed silently; ANY OTHER error is durable drift (a missing column, an enum/
+ * CHECK rejection, an overflow) that would otherwise silently disable auditing fleet-wide,
+ * so it is logged (credential-free — event kind + SQLSTATE only, never the payload) to
+ * surface it, while STILL not failing the login.
+ *
+ * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
+ * and callers must keep `metadata` credential-free.
+ */
+export async function recordAuthEvent(pool, evt) {
+    try {
+        await pool.query(`INSERT INTO fcr_core.auth_event
+         (account_id, username, app_key, event, auth_path, reason, ip, user_agent, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
+            evt.accountId ?? null,
+            evt.username,
+            evt.appKey,
+            evt.event,
+            evt.authPath ?? "office",
+            evt.reason ?? null,
+            evt.ip ?? null,
+            evt.userAgent ?? null,
+            evt.metadata ? JSON.stringify(evt.metadata) : null,
+        ]);
+    }
+    catch (err) {
+        // Never surface to the login flow. 42P01 (undefined_table) is the expected pre-migration
+        // window → stay silent. Anything else is durable drift that would silently drop audit
+        // rows, so log it — credential-free: event kind + SQLSTATE only, never the payload.
+        const code = err?.code;
+        if (code !== "42P01") {
+            console.error(`[auth_event] durable audit-write failure (event=${evt.event}, code=${code ?? "unknown"}) — login auditing may be dropping rows`);
+        }
+    }
+}
+/**
  * Authenticate an OFFICE user against the shared store for a specific app.
  *
  * Flow (fail-closed): resolve the active, non-deleted `office` account by case-insensitive username — on no
@@ -79,6 +121,13 @@ export function passwordMeetsPolicy(password) {
  */
 export async function authenticateOffice(pool, args) {
     const username = args.username.trim();
+    // One audit event per outcome (epic #408). Awaited but error-swallowed inside
+    // recordAuthEvent — adds one DB round-trip per outcome but can never change or fail
+    // the login.
+    const emit = (event, accountId, reason) => recordAuthEvent(pool, {
+        accountId, username, appKey: args.appKey, event, reason,
+        authPath: "office", ip: args.context?.ip, userAgent: args.context?.userAgent,
+    });
     const { rows } = await pool.query(`SELECT id, username, display_name, password_hash, password_salt,
             password_set_at::text AS password_set_at, must_change, failed_attempts,
             locked_until::text AS locked_until
@@ -87,13 +136,16 @@ export async function authenticateOffice(pool, args) {
         AND active = TRUE AND deleted_at IS NULL`, [username]);
     const acct = rows[0];
     // Default-deny: unknown username is "invalid" (do NOT leak existence). Spend a decoy verify so the no-row
-    // path takes ~the same time as a real one, then return — no DB write.
+    // path takes ~the same time as a real one, then emit the audit event (account_id null) and return — the
+    // decoy verify + emit are the only work, no account mutation.
     if (!acct) {
         await verifyPassword(args.password, DECOY_SALT, DECOY_HASH);
+        await emit("login_failed", null, "invalid");
         return { ok: false, reason: "invalid" };
     }
     const now = Date.now();
     if (acct.locked_until && Date.parse(acct.locked_until) > now) {
+        await emit("locked", acct.id, "locked");
         return { ok: false, reason: "locked" };
     }
     if (!(await verifyPassword(args.password, acct.password_salt, acct.password_hash))) {
@@ -107,6 +159,7 @@ export async function authenticateOffice(pool, args) {
                                   ELSE locked_until END,
               updated_at = now()
         WHERE id = $1`, [acct.id, LOCKOUT_THRESHOLD, String(LOCKOUT_DURATION_MS)]);
+        await emit("login_failed", acct.id, "invalid");
         return { ok: false, reason: "invalid" };
     }
     // Password is correct → clear any stale failed-attempt counter / lock NOW, before the remaining gates. A
@@ -117,14 +170,18 @@ export async function authenticateOffice(pool, args) {
     }
     // A temp (must_change) password expires 72h after it was set.
     if (acct.must_change && acct.password_set_at && now - Date.parse(acct.password_set_at) > TEMP_PASSWORD_TTL_MS) {
+        await emit("temp_expired", acct.id, "temp_expired");
         return { ok: false, reason: "temp_expired" };
     }
     // The per-app gate: one active grant for THIS app, else no access.
     const access = await pool.query(`SELECT 1 AS one FROM fcr_core.app_access
       WHERE account_id = $1 AND lower(app_key) = lower($2) AND active = TRUE AND deleted_at IS NULL
       LIMIT 1`, [acct.id, args.appKey]);
-    if (access.rows.length === 0)
+    if (access.rows.length === 0) {
+        await emit("no_app_access", acct.id, "no_app_access");
         return { ok: false, reason: "no_app_access" };
+    }
+    await emit("login", acct.id, null);
     return {
         ok: true,
         user: {

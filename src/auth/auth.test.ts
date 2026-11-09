@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   hashPassword,
   verifyPassword,
   passwordMeetsPolicy,
   authenticateOffice,
+  recordAuthEvent,
   LOCKOUT_THRESHOLD,
   LOCKOUT_DURATION_MS,
   TEMP_PASSWORD_TTL_MS,
@@ -19,10 +20,22 @@ type Call = { text: string; params: unknown[] };
 function fakePool(opts: {
   account?: Record<string, unknown> | null;
   hasAccess?: boolean;
-}): { pool: Queryable; writes: Call[] } {
+  failAuthEventInsert?: boolean; // simulate a write error on the audit insert
+  authEventInsertErrorCode?: string; // SQLSTATE to attach to that error (e.g. "42P01")
+}): { pool: Queryable; writes: Call[]; events: Call[] } {
   const writes: Call[] = [];
+  const events: Call[] = [];
   const pool: Queryable = {
     async query<T>(text: string, params?: unknown[]) {
+      if (text.includes("INSERT INTO fcr_core.auth_event")) {
+        if (opts.failAuthEventInsert || opts.authEventInsertErrorCode) {
+          const e = new Error('audit insert failed') as Error & { code?: string };
+          if (opts.authEventInsertErrorCode) e.code = opts.authEventInsertErrorCode;
+          throw e;
+        }
+        events.push({ text, params: params ?? [] });
+        return { rows: [] as T[] };
+      }
       if (text.includes("UPDATE fcr_core.account")) {
         writes.push({ text, params: params ?? [] });
         return { rows: [] as T[] };
@@ -36,7 +49,7 @@ function fakePool(opts: {
       throw new Error("unexpected query: " + text);
     },
   };
-  return { pool, writes };
+  return { pool, writes, events };
 }
 
 async function officeRow(over: Record<string, unknown> = {}) {
@@ -143,5 +156,93 @@ describe("authenticateOffice", () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].text).toContain("failed_attempts = 0");
     expect(writes[0].params).toEqual(["acct-1"]);
+  });
+});
+
+describe("auth_event emission (epic #408)", () => {
+  // params order: [account_id, username, app_key, event, auth_path, reason, ip, user_agent, metadata]
+  it("emits a 'login' event with account id + context on success", async () => {
+    const { pool, events } = fakePool({ account: await officeRow(), hasAccess: true });
+    const r = await authenticateOffice(pool, {
+      username: "amanda", password: "correct-horse-battery", appKey: "dispatch",
+      context: { ip: "203.0.113.7", userAgent: "UA/1.0" },
+    });
+    expect(r.ok).toBe(true);
+    expect(events).toHaveLength(1);
+    const p = events[0].params;
+    expect(p[0]).toBe("acct-1");       // account_id
+    expect(p[2]).toBe("dispatch");     // app_key
+    expect(p[3]).toBe("login");        // event
+    expect(p[4]).toBe("office");       // auth_path
+    expect(p[5]).toBeNull();           // reason (none on success)
+    expect(p[6]).toBe("203.0.113.7");  // ip
+    expect(p[7]).toBe("UA/1.0");       // user_agent
+  });
+
+  it("emits 'login_failed'/'invalid' for an unknown username, account id null", async () => {
+    const { pool, events } = fakePool({ account: null });
+    const r = await authenticateOffice(pool, { username: "nobody", password: "x", appKey: "dispatch" });
+    expect(r).toEqual({ ok: false, reason: "invalid" });
+    expect(events).toHaveLength(1);
+    expect(events[0].params[0]).toBeNull();            // account_id
+    expect(events[0].params[1]).toBe("nobody");        // username attempted
+    expect(events[0].params[3]).toBe("login_failed");
+    expect(events[0].params[5]).toBe("invalid");       // reason
+  });
+
+  it("emits exactly one event per terminal outcome (locked / wrong-pw / no_app_access)", async () => {
+    const future = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const locked = fakePool({ account: await officeRow({ locked_until: future }), hasAccess: true });
+    await authenticateOffice(locked.pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+    expect(locked.events.map((e) => e.params[3])).toEqual(["locked"]);
+
+    const wrong = fakePool({ account: await officeRow(), hasAccess: true });
+    await authenticateOffice(wrong.pool, { username: "amanda", password: "WRONG", appKey: "dispatch" });
+    expect(wrong.events.map((e) => e.params[3])).toEqual(["login_failed"]);
+
+    const noAccess = fakePool({ account: await officeRow(), hasAccess: false });
+    await authenticateOffice(noAccess.pool, { username: "amanda", password: "correct-horse-battery", appKey: "estimating" });
+    expect(noAccess.events.map((e) => e.params[3])).toEqual(["no_app_access"]);
+  });
+
+  it("never records the password in the emitted event", async () => {
+    const { pool, events } = fakePool({ account: await officeRow(), hasAccess: true });
+    await authenticateOffice(pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+    expect(JSON.stringify(events)).not.toContain("correct-horse-battery");
+  });
+
+  it("a failed auth_event insert NEVER affects the login outcome (swallowed)", async () => {
+    const { pool } = fakePool({ account: await officeRow(), hasAccess: true, failAuthEventInsert: true });
+    const r = await authenticateOffice(pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+    expect(r.ok).toBe(true); // the audit insert threw; login still succeeds
+  });
+
+  it("recordAuthEvent swallows a write error rather than propagating", async () => {
+    const throwing: Queryable = { async query() { throw new Error("boom"); } };
+    await expect(
+      recordAuthEvent(throwing, { username: "x", appKey: "dispatch", event: "logout" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("stays SILENT on the expected pre-migration 42P01, but LOGS any other durable failure", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 42P01 (undefined_table) = the expected deploy-before-migration window → no log
+      const pre = fakePool({ account: await officeRow(), hasAccess: true, authEventInsertErrorCode: "42P01" });
+      const r1 = await authenticateOffice(pre.pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+      expect(r1.ok).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+
+      // a different SQLSTATE (e.g. 42703 undefined_column) = durable drift → logged (credential-free)
+      const drift = fakePool({ account: await officeRow(), hasAccess: true, authEventInsertErrorCode: "42703" });
+      const r2 = await authenticateOffice(drift.pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+      expect(r2.ok).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const logged = String(spy.mock.calls[0]?.[0] ?? "");
+      expect(logged).toContain("42703");
+      expect(logged).not.toContain("correct-horse-battery"); // never the credential
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
