@@ -95,6 +95,79 @@ export type AuthFailure =
 
 export type OfficeAuthResult = { ok: true; user: OfficeUser } | { ok: false; reason: AuthFailure };
 
+// ── login-history / security auditing (epic fcr-dispatch#408) ─────────────────
+// A durable record of each authentication outcome, written to fcr_core.auth_event —
+// a DEDICATED table (NOT event_log, which is resource-centric change-audit with a
+// 200-row read cap). App-owned, no sf_id, NEVER a sync target → no DISPATCH_PUSH_LIVE
+// exposure. The emit lives HERE (the one office-auth chokepoint) so it covers every
+// app as it flips AUTH_STORE_LIVE; pre-cutover legacy (users.ts) logins are captured
+// by the per-app wrapper instrument (S2), driver-PIN/kiosk at their own verify points.
+
+/** The outcome kinds auth_event records. authenticateOffice emits the first five; the
+ *  rest (logout / password_changed / temp_set) are written by their own call sites. */
+export type AuthEventType =
+  | "login" // successful office login
+  | "login_failed" // bad credential / unknown username
+  | "locked" // attempt while locked_until is in the future
+  | "temp_expired" // correct temp password past its 72h TTL
+  | "no_app_access" // valid credential, no grant for THIS app
+  | "logout"
+  | "password_changed"
+  | "temp_set";
+
+/** Request context the login ACTION has (the verify fn does not) — the trusted client
+ *  IP (same proxy-verified source the throttle uses) and user-agent. Optional: an app
+ *  that has not wired it yet records the event with null ip/ua rather than nothing. */
+export interface AuthEventContext {
+  ip?: string | null;
+  userAgent?: string | null;
+}
+
+export interface AuthEvent {
+  accountId?: string | null; // resolved account.id, or null for an unknown-username attempt
+  username: string; // the username attempted (lower-compared downstream)
+  appKey: string;
+  event: AuthEventType;
+  authPath?: "office" | "pin" | "kiosk"; // defaults to "office"
+  reason?: string | null; // typed enum only — NEVER credential material
+  ip?: string | null;
+  userAgent?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * Write one authentication event. AWAITED but SWALLOWED — a failed or impossible insert
+ * (including the deploy-before-migration window, when fcr_core.auth_event does not yet
+ * exist) must NEVER block or fail a login, exactly the discipline authenticateOffice's
+ * counter writes already follow. Login is critical-path; auditing is best-effort.
+ *
+ * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
+ * and callers must keep `metadata` credential-free.
+ */
+export async function recordAuthEvent(pool: Queryable, evt: AuthEvent): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO fcr_core.auth_event
+         (account_id, username, app_key, event, auth_path, reason, ip, user_agent, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        evt.accountId ?? null,
+        evt.username,
+        evt.appKey,
+        evt.event,
+        evt.authPath ?? "office",
+        evt.reason ?? null,
+        evt.ip ?? null,
+        evt.userAgent ?? null,
+        evt.metadata ? JSON.stringify(evt.metadata) : null,
+      ],
+    );
+  } catch {
+    // Audit is best-effort: a missing table (pre-migration) or any write error must not
+    // surface to the login flow. Intentionally swallowed — no rethrow.
+  }
+}
+
 interface AccountRow {
   id: string;
   username: string;
@@ -126,9 +199,16 @@ interface AccountRow {
  */
 export async function authenticateOffice(
   pool: Queryable,
-  args: { username: string; password: string; appKey: string },
+  args: { username: string; password: string; appKey: string; context?: AuthEventContext },
 ): Promise<OfficeAuthResult> {
   const username = args.username.trim();
+  // One audit event per outcome (epic #408). Fire-and-forget — recordAuthEvent swallows
+  // its own errors, so emitting can never change or fail the login.
+  const emit = (event: AuthEventType, accountId: string | null, reason: string | null) =>
+    recordAuthEvent(pool, {
+      accountId, username, appKey: args.appKey, event, reason,
+      authPath: "office", ip: args.context?.ip, userAgent: args.context?.userAgent,
+    });
   const { rows } = await pool.query<AccountRow>(
     `SELECT id, username, display_name, password_hash, password_salt,
             password_set_at::text AS password_set_at, must_change, failed_attempts,
@@ -143,11 +223,13 @@ export async function authenticateOffice(
   // path takes ~the same time as a real one, then return — no DB write.
   if (!acct) {
     await verifyPassword(args.password, DECOY_SALT, DECOY_HASH);
+    await emit("login_failed", null, "invalid");
     return { ok: false, reason: "invalid" };
   }
 
   const now = Date.now();
   if (acct.locked_until && Date.parse(acct.locked_until) > now) {
+    await emit("locked", acct.id, "locked");
     return { ok: false, reason: "locked" };
   }
 
@@ -165,6 +247,7 @@ export async function authenticateOffice(
         WHERE id = $1`,
       [acct.id, LOCKOUT_THRESHOLD, String(LOCKOUT_DURATION_MS)],
     );
+    await emit("login_failed", acct.id, "invalid");
     return { ok: false, reason: "invalid" };
   }
 
@@ -180,6 +263,7 @@ export async function authenticateOffice(
 
   // A temp (must_change) password expires 72h after it was set.
   if (acct.must_change && acct.password_set_at && now - Date.parse(acct.password_set_at) > TEMP_PASSWORD_TTL_MS) {
+    await emit("temp_expired", acct.id, "temp_expired");
     return { ok: false, reason: "temp_expired" };
   }
 
@@ -190,8 +274,12 @@ export async function authenticateOffice(
       LIMIT 1`,
     [acct.id, args.appKey],
   );
-  if (access.rows.length === 0) return { ok: false, reason: "no_app_access" };
+  if (access.rows.length === 0) {
+    await emit("no_app_access", acct.id, "no_app_access");
+    return { ok: false, reason: "no_app_access" };
+  }
 
+  await emit("login", acct.id, null);
   return {
     ok: true,
     user: {

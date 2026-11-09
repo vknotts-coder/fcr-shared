@@ -39,6 +39,37 @@ export type OfficeAuthResult = {
     ok: false;
     reason: AuthFailure;
 };
+/** The outcome kinds auth_event records. authenticateOffice emits the first five; the
+ *  rest (logout / password_changed / temp_set) are written by their own call sites. */
+export type AuthEventType = "login" | "login_failed" | "locked" | "temp_expired" | "no_app_access" | "logout" | "password_changed" | "temp_set";
+/** Request context the login ACTION has (the verify fn does not) — the trusted client
+ *  IP (same proxy-verified source the throttle uses) and user-agent. Optional: an app
+ *  that has not wired it yet records the event with null ip/ua rather than nothing. */
+export interface AuthEventContext {
+    ip?: string | null;
+    userAgent?: string | null;
+}
+export interface AuthEvent {
+    accountId?: string | null;
+    username: string;
+    appKey: string;
+    event: AuthEventType;
+    authPath?: "office" | "pin" | "kiosk";
+    reason?: string | null;
+    ip?: string | null;
+    userAgent?: string | null;
+    metadata?: Record<string, unknown> | null;
+}
+/**
+ * Write one authentication event. AWAITED but SWALLOWED — a failed or impossible insert
+ * (including the deploy-before-migration window, when fcr_core.auth_event does not yet
+ * exist) must NEVER block or fail a login, exactly the discipline authenticateOffice's
+ * counter writes already follow. Login is critical-path; auditing is best-effort.
+ *
+ * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
+ * and callers must keep `metadata` credential-free.
+ */
+export declare function recordAuthEvent(pool: Queryable, evt: AuthEvent): Promise<void>;
 /**
  * Authenticate an OFFICE user against the shared store for a specific app.
  *
@@ -60,6 +91,7 @@ export declare function authenticateOffice(pool: Queryable, args: {
     username: string;
     password: string;
     appKey: string;
+    context?: AuthEventContext;
 }): Promise<OfficeAuthResult>;
 export declare const PAIR_FAIL_THRESHOLD = 5;
 export declare const IP_FAIL_THRESHOLD = 50;

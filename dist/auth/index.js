@@ -61,6 +61,36 @@ export function passwordMeetsPolicy(password) {
     return password.length >= PASSWORD_MIN_LENGTH;
 }
 /**
+ * Write one authentication event. AWAITED but SWALLOWED — a failed or impossible insert
+ * (including the deploy-before-migration window, when fcr_core.auth_event does not yet
+ * exist) must NEVER block or fail a login, exactly the discipline authenticateOffice's
+ * counter writes already follow. Login is critical-path; auditing is best-effort.
+ *
+ * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
+ * and callers must keep `metadata` credential-free.
+ */
+export async function recordAuthEvent(pool, evt) {
+    try {
+        await pool.query(`INSERT INTO fcr_core.auth_event
+         (account_id, username, app_key, event, auth_path, reason, ip, user_agent, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [
+            evt.accountId ?? null,
+            evt.username,
+            evt.appKey,
+            evt.event,
+            evt.authPath ?? "office",
+            evt.reason ?? null,
+            evt.ip ?? null,
+            evt.userAgent ?? null,
+            evt.metadata ? JSON.stringify(evt.metadata) : null,
+        ]);
+    }
+    catch {
+        // Audit is best-effort: a missing table (pre-migration) or any write error must not
+        // surface to the login flow. Intentionally swallowed — no rethrow.
+    }
+}
+/**
  * Authenticate an OFFICE user against the shared store for a specific app.
  *
  * Flow (fail-closed): resolve the active, non-deleted `office` account by case-insensitive username — on no
@@ -79,6 +109,12 @@ export function passwordMeetsPolicy(password) {
  */
 export async function authenticateOffice(pool, args) {
     const username = args.username.trim();
+    // One audit event per outcome (epic #408). Fire-and-forget — recordAuthEvent swallows
+    // its own errors, so emitting can never change or fail the login.
+    const emit = (event, accountId, reason) => recordAuthEvent(pool, {
+        accountId, username, appKey: args.appKey, event, reason,
+        authPath: "office", ip: args.context?.ip, userAgent: args.context?.userAgent,
+    });
     const { rows } = await pool.query(`SELECT id, username, display_name, password_hash, password_salt,
             password_set_at::text AS password_set_at, must_change, failed_attempts,
             locked_until::text AS locked_until
@@ -90,10 +126,12 @@ export async function authenticateOffice(pool, args) {
     // path takes ~the same time as a real one, then return — no DB write.
     if (!acct) {
         await verifyPassword(args.password, DECOY_SALT, DECOY_HASH);
+        await emit("login_failed", null, "invalid");
         return { ok: false, reason: "invalid" };
     }
     const now = Date.now();
     if (acct.locked_until && Date.parse(acct.locked_until) > now) {
+        await emit("locked", acct.id, "locked");
         return { ok: false, reason: "locked" };
     }
     if (!(await verifyPassword(args.password, acct.password_salt, acct.password_hash))) {
@@ -107,6 +145,7 @@ export async function authenticateOffice(pool, args) {
                                   ELSE locked_until END,
               updated_at = now()
         WHERE id = $1`, [acct.id, LOCKOUT_THRESHOLD, String(LOCKOUT_DURATION_MS)]);
+        await emit("login_failed", acct.id, "invalid");
         return { ok: false, reason: "invalid" };
     }
     // Password is correct → clear any stale failed-attempt counter / lock NOW, before the remaining gates. A
@@ -117,14 +156,18 @@ export async function authenticateOffice(pool, args) {
     }
     // A temp (must_change) password expires 72h after it was set.
     if (acct.must_change && acct.password_set_at && now - Date.parse(acct.password_set_at) > TEMP_PASSWORD_TTL_MS) {
+        await emit("temp_expired", acct.id, "temp_expired");
         return { ok: false, reason: "temp_expired" };
     }
     // The per-app gate: one active grant for THIS app, else no access.
     const access = await pool.query(`SELECT 1 AS one FROM fcr_core.app_access
       WHERE account_id = $1 AND lower(app_key) = lower($2) AND active = TRUE AND deleted_at IS NULL
       LIMIT 1`, [acct.id, args.appKey]);
-    if (access.rows.length === 0)
+    if (access.rows.length === 0) {
+        await emit("no_app_access", acct.id, "no_app_access");
         return { ok: false, reason: "no_app_access" };
+    }
+    await emit("login", acct.id, null);
     return {
         ok: true,
         user: {
