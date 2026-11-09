@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   hashPassword,
   verifyPassword,
@@ -20,14 +20,19 @@ type Call = { text: string; params: unknown[] };
 function fakePool(opts: {
   account?: Record<string, unknown> | null;
   hasAccess?: boolean;
-  failAuthEventInsert?: boolean; // simulate the pre-migration / write-error case
+  failAuthEventInsert?: boolean; // simulate a write error on the audit insert
+  authEventInsertErrorCode?: string; // SQLSTATE to attach to that error (e.g. "42P01")
 }): { pool: Queryable; writes: Call[]; events: Call[] } {
   const writes: Call[] = [];
   const events: Call[] = [];
   const pool: Queryable = {
     async query<T>(text: string, params?: unknown[]) {
       if (text.includes("INSERT INTO fcr_core.auth_event")) {
-        if (opts.failAuthEventInsert) throw new Error('relation "fcr_core.auth_event" does not exist');
+        if (opts.failAuthEventInsert || opts.authEventInsertErrorCode) {
+          const e = new Error('audit insert failed') as Error & { code?: string };
+          if (opts.authEventInsertErrorCode) e.code = opts.authEventInsertErrorCode;
+          throw e;
+        }
         events.push({ text, params: params ?? [] });
         return { rows: [] as T[] };
       }
@@ -217,5 +222,27 @@ describe("auth_event emission (epic #408)", () => {
     await expect(
       recordAuthEvent(throwing, { username: "x", appKey: "dispatch", event: "logout" }),
     ).resolves.toBeUndefined();
+  });
+
+  it("stays SILENT on the expected pre-migration 42P01, but LOGS any other durable failure", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 42P01 (undefined_table) = the expected deploy-before-migration window → no log
+      const pre = fakePool({ account: await officeRow(), hasAccess: true, authEventInsertErrorCode: "42P01" });
+      const r1 = await authenticateOffice(pre.pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+      expect(r1.ok).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+
+      // a different SQLSTATE (e.g. 42703 undefined_column) = durable drift → logged (credential-free)
+      const drift = fakePool({ account: await officeRow(), hasAccess: true, authEventInsertErrorCode: "42703" });
+      const r2 = await authenticateOffice(drift.pool, { username: "amanda", password: "correct-horse-battery", appKey: "dispatch" });
+      expect(r2.ok).toBe(true);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const logged = String(spy.mock.calls[0]?.[0] ?? "");
+      expect(logged).toContain("42703");
+      expect(logged).not.toContain("correct-horse-battery"); // never the credential
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -61,10 +61,17 @@ export function passwordMeetsPolicy(password) {
     return password.length >= PASSWORD_MIN_LENGTH;
 }
 /**
- * Write one authentication event. AWAITED but SWALLOWED — a failed or impossible insert
- * (including the deploy-before-migration window, when fcr_core.auth_event does not yet
- * exist) must NEVER block or fail a login, exactly the discipline authenticateOffice's
- * counter writes already follow. Login is critical-path; auditing is best-effort.
+ * Write one authentication event. AWAITED (one DB round-trip per outcome) but
+ * error-SWALLOWED: auditing is best-effort and login is critical-path, so an audit-write
+ * failure can never block or fail a login. (This is the module's ONLY swallowed write —
+ * the failed_attempts/lockout counters deliberately propagate, fail-closed; the swallow
+ * here is justified by audit being best-effort, not by any counter-write precedent.)
+ *
+ * Observability: the deploy-before-migration window (undefined_table `42P01`) is EXPECTED
+ * and swallowed silently; ANY OTHER error is durable drift (a missing column, an enum/
+ * CHECK rejection, an overflow) that would otherwise silently disable auditing fleet-wide,
+ * so it is logged (credential-free — event kind + SQLSTATE only, never the payload) to
+ * surface it, while STILL not failing the login.
  *
  * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
  * and callers must keep `metadata` credential-free.
@@ -85,9 +92,14 @@ export async function recordAuthEvent(pool, evt) {
             evt.metadata ? JSON.stringify(evt.metadata) : null,
         ]);
     }
-    catch {
-        // Audit is best-effort: a missing table (pre-migration) or any write error must not
-        // surface to the login flow. Intentionally swallowed — no rethrow.
+    catch (err) {
+        // Never surface to the login flow. 42P01 (undefined_table) is the expected pre-migration
+        // window → stay silent. Anything else is durable drift that would silently drop audit
+        // rows, so log it — credential-free: event kind + SQLSTATE only, never the payload.
+        const code = err?.code;
+        if (code !== "42P01") {
+            console.error(`[auth_event] durable audit-write failure (event=${evt.event}, code=${code ?? "unknown"}) — login auditing may be dropping rows`);
+        }
     }
 }
 /**
@@ -109,8 +121,9 @@ export async function recordAuthEvent(pool, evt) {
  */
 export async function authenticateOffice(pool, args) {
     const username = args.username.trim();
-    // One audit event per outcome (epic #408). Fire-and-forget — recordAuthEvent swallows
-    // its own errors, so emitting can never change or fail the login.
+    // One audit event per outcome (epic #408). Awaited but error-swallowed inside
+    // recordAuthEvent — adds one DB round-trip per outcome but can never change or fail
+    // the login.
     const emit = (event, accountId, reason) => recordAuthEvent(pool, {
         accountId, username, appKey: args.appKey, event, reason,
         authPath: "office", ip: args.context?.ip, userAgent: args.context?.userAgent,
@@ -123,7 +136,8 @@ export async function authenticateOffice(pool, args) {
         AND active = TRUE AND deleted_at IS NULL`, [username]);
     const acct = rows[0];
     // Default-deny: unknown username is "invalid" (do NOT leak existence). Spend a decoy verify so the no-row
-    // path takes ~the same time as a real one, then return — no DB write.
+    // path takes ~the same time as a real one, then emit the audit event (account_id null) and return — the
+    // decoy verify + emit are the only work, no account mutation.
     if (!acct) {
         await verifyPassword(args.password, DECOY_SALT, DECOY_HASH);
         await emit("login_failed", null, "invalid");

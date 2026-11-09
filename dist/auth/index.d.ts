@@ -40,8 +40,10 @@ export type OfficeAuthResult = {
     reason: AuthFailure;
 };
 /** The outcome kinds auth_event records. authenticateOffice emits the first five; the
- *  rest (logout / password_changed / temp_set) are written by their own call sites. */
-export type AuthEventType = "login" | "login_failed" | "locked" | "temp_expired" | "no_app_access" | "logout" | "password_changed" | "temp_set";
+ *  rest are written by their own call sites — `throttled` by the login route when
+ *  checkLoginThrottle blocks an attempt BEFORE authenticateOffice runs (so the audit
+ *  isn't blind during an active brute-force), the others by logout / password flows. */
+export type AuthEventType = "login" | "login_failed" | "locked" | "temp_expired" | "no_app_access" | "throttled" | "logout" | "password_changed" | "temp_set";
 /** Request context the login ACTION has (the verify fn does not) — the trusted client
  *  IP (same proxy-verified source the throttle uses) and user-agent. Optional: an app
  *  that has not wired it yet records the event with null ip/ua rather than nothing. */
@@ -61,10 +63,17 @@ export interface AuthEvent {
     metadata?: Record<string, unknown> | null;
 }
 /**
- * Write one authentication event. AWAITED but SWALLOWED — a failed or impossible insert
- * (including the deploy-before-migration window, when fcr_core.auth_event does not yet
- * exist) must NEVER block or fail a login, exactly the discipline authenticateOffice's
- * counter writes already follow. Login is critical-path; auditing is best-effort.
+ * Write one authentication event. AWAITED (one DB round-trip per outcome) but
+ * error-SWALLOWED: auditing is best-effort and login is critical-path, so an audit-write
+ * failure can never block or fail a login. (This is the module's ONLY swallowed write —
+ * the failed_attempts/lockout counters deliberately propagate, fail-closed; the swallow
+ * here is justified by audit being best-effort, not by any counter-write precedent.)
+ *
+ * Observability: the deploy-before-migration window (undefined_table `42P01`) is EXPECTED
+ * and swallowed silently; ANY OTHER error is durable drift (a missing column, an enum/
+ * CHECK rejection, an overflow) that would otherwise silently disable auditing fleet-wide,
+ * so it is logged (credential-free — event kind + SQLSTATE only, never the payload) to
+ * surface it, while STILL not failing the login.
  *
  * ⚠ NEVER pass a password or any credential material — `reason` is the typed enum only,
  * and callers must keep `metadata` credential-free.
