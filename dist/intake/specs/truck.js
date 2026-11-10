@@ -20,8 +20,23 @@ export const ESTIMATOR_NAMES = ["JR", "BH", "JS", "AR"];
 // enumerated here (they belong to the deferred truck-flow slice, keyed off the SF audit); the
 // status is engine-seeded on create and free to be set by a later, specced edit path.
 const TRUCK_INTAKE_STATUSES = ["Awaiting Pickup Info", "Awaiting Pickup", "Customer Drop Off"];
-export const TRUCK_NUMERIC_COLS = new Set([]);
-export const TRUCK_DATE_COLS = new Set(["notify_date", "status_date"]);
+// Estimate-information edit surface (epic fcr-estimating#60 S2): the labor-hour components + line count +
+// both sales-$ figures coerce as numbers; the estimate dates coerce as dates. All verified updateable:true,
+// calculated:false against the live FCR_Collision_Truck__c (2026-11-10), and each reverse-syncs Core→SF via
+// fcr-dispatch TRUCK_EDIT_COLS. The sales-$ columns (total_sales / finalized_total_sales) are editable by the
+// estimating department (they own the number) — visibility is opened to all estimating staff in the app layer
+// (fcr-estimating resolvePrincipal), NOT here. The computed rollups total_estimated_hours / finalized_total_hours
+// are NOT columns and are NOT editable (SF formula fields) — the UI edits the components; SF recomputes.
+export const TRUCK_NUMERIC_COLS = new Set([
+    "body_hours", "body_s_hours", "frame_hours", "mechanical_hours", "refinish_hours",
+    "finalized_body_hours", "finalized_frame_hours", "finalized_mechanical_hours",
+    "finalized_refinish_hours", "total_billed_hours", "total_lines_on_estimate",
+    "total_sales", "finalized_total_sales",
+]);
+export const TRUCK_DATE_COLS = new Set([
+    "notify_date", "status_date",
+    "estimate_sent_date", "estimate_completed", "estimate_approved", "estimate_finalized",
+]);
 // `rework` is a real boolean column edited via a Yes/No <select>; coerced to true/false/null (blank) so the
 // value binds to the boolean column (mirrors TRAILER_BOOL_COLS). Added with the billing section (epic #28 B).
 export const TRUCK_BOOL_COLS = new Set(["rework"]);
@@ -59,6 +74,31 @@ export const TRUCK_FORM_FIELDS = [
     { column: "invoice_3", label: "Invoice #3", section: "invoice", input: "text" },
     { column: "invoice_4", label: "Invoice #4", section: "invoice", input: "text" },
     { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", ...YES_NO] },
+    // Estimate Information (epic fcr-estimating#60 S2) — the estimating department's day-to-day edit surface.
+    // Dates + per-area labor hours + line count + estimate notes + Total Sales. total_sales is editable by the
+    // estimating staff who own the figure (money visibility is opened app-side, not gated here). The computed
+    // rollup total_estimated_hours is NOT here — it is a SF formula (sum of the components), recomputed by SF.
+    { column: "estimate_sent_date", label: "Estimate Sent", section: "estimate", input: "date" },
+    { column: "estimate_completed", label: "Estimate Completed", section: "estimate", input: "date" },
+    { column: "estimate_approved", label: "Estimate Approved", section: "estimate", input: "date" },
+    { column: "estimate_finalized", label: "Estimate Finalized", section: "estimate", input: "date" },
+    { column: "body_hours", label: "Body Hours", section: "estimate", input: "number" },
+    { column: "body_s_hours", label: "Body-S Hours", section: "estimate", input: "number" },
+    { column: "frame_hours", label: "Frame Hours", section: "estimate", input: "number" },
+    { column: "mechanical_hours", label: "Mechanical Hours", section: "estimate", input: "number" },
+    { column: "refinish_hours", label: "Refinish Hours", section: "estimate", input: "number" },
+    { column: "total_lines_on_estimate", label: "Lines on Estimate", section: "estimate", input: "number" },
+    { column: "estimate_notes", label: "Estimate Notes", section: "estimate", input: "textarea" },
+    { column: "revised_estimate_notes", label: "Revised Estimate Notes", section: "estimate", input: "textarea" },
+    { column: "total_sales", label: "Total Sales", section: "estimate", input: "number" },
+    // Finalized Estimate Information (epic fcr-estimating#60 S2) — finalized per-area hours + billed hours +
+    // Finalized Total Sales. finalized_total_hours (rollup) is omitted for the same reason as total_estimated_hours.
+    { column: "finalized_body_hours", label: "Finalized Body Hours", section: "finalized", input: "number" },
+    { column: "finalized_frame_hours", label: "Finalized Frame Hours", section: "finalized", input: "number" },
+    { column: "finalized_mechanical_hours", label: "Finalized Mechanical Hours", section: "finalized", input: "number" },
+    { column: "finalized_refinish_hours", label: "Finalized Refinish Hours", section: "finalized", input: "number" },
+    { column: "total_billed_hours", label: "Total Billed Hours", section: "finalized", input: "number" },
+    { column: "finalized_total_sales", label: "Finalized Total Sales", section: "finalized", input: "number" },
 ];
 /** Truck status seed/stamp. CREATE: seed status from the pickup arrangement (Customer Drop Off
  *  mode → "Customer Drop Off"; a pickup address → "Awaiting Pickup"; else "Awaiting Pickup Info"),
