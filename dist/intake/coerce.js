@@ -45,7 +45,14 @@ export function coerceField(column, raw, numericCols, dateCols, boolCols = new S
     if (s === "")
         return null;
     if (numericCols.has(column)) {
-        const n = Number(s.replace(/[^0-9.\-]/g, ""));
+        // Strip currency/formatting chars, then coerce. A value with NO digits at all ("N/A", "TBD",
+        // "pending") strips to "" — and Number("") is 0 (finite), which would silently write a real 0
+        // (e.g. $0 Total Sales reverse-syncing to SF) instead of leaving the field unset. So treat an
+        // all-non-numeric entry the same as blank: null, not 0. (#60 S2 review — money-coercion bug.)
+        const cleaned = s.replace(/[^0-9.\-]/g, "");
+        if (cleaned === "")
+            return null;
+        const n = Number(cleaned);
         return Number.isFinite(n) ? n : null;
     }
     if (dateCols.has(column))

@@ -587,3 +587,21 @@ describe("truckSpec — Estimate Information edit fields (#60 S2)", () => {
     expect(TRUCK_DATE_COLS.has("total_estimated_hours")).toBe(false);
   });
 });
+
+// #60 S2 review fix — a non-numeric money/hours entry must coerce to null, NOT 0. Negative control: the
+// pre-fix code did `Number(strip("N/A"))` = Number("") = 0, silently writing $0 and reverse-syncing it to
+// SF; these assertions FAIL against that old behavior (0 !== null) and pass only with the empty→null guard.
+describe("coerceField — non-numeric numeric input → null, not 0 (#60 S2 money-coercion fix)", () => {
+  const num = (raw: string) => coerceField("total_sales", raw, TRUCK_NUMERIC_COLS, TRUCK_DATE_COLS);
+  it("all-non-numeric strings → null (would be 0 before the fix)", () => {
+    expect(num("N/A")).toBe(null);
+    expect(num("TBD")).toBe(null);
+    expect(num("pending")).toBe(null);
+  });
+  it("blank → null; real numbers still coerce", () => {
+    expect(num("")).toBe(null);
+    expect(num("15000")).toBe(15000);
+    expect(num("$15,250.50")).toBe(15250.5);
+    expect(num("-3")).toBe(-3);
+  });
+});
