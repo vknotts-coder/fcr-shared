@@ -6,6 +6,7 @@ export type SectionKey =
   | "information"
   | "incoming_transport"
   | "estimate"
+  | "finalized"
   | "parts"
   | "repair"
   | "outgoing_transport"
@@ -17,6 +18,7 @@ export const SECTION_TITLES: Record<SectionKey, string> = {
   information: "Information",
   incoming_transport: "Incoming Transportation",
   estimate: "Estimate Information",
+  finalized: "Finalized Estimate Information",
   parts: "Parts Information",
   repair: "Repair Information",
   outgoing_transport: "Outgoing Transportation",
@@ -30,6 +32,7 @@ export const SECTION_ORDER: SectionKey[] = [
   "information",
   "incoming_transport",
   "estimate",
+  "finalized",
   "parts",
   "repair",
   "outgoing_transport",

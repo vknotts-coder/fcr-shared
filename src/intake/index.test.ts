@@ -9,7 +9,7 @@ import {
   TRAILER_DATE_COLS,
   TRAILER_BOOL_COLS,
 } from "./specs/trailer.js";
-import { applyTruckStatusEngine, validateTruck, truckSpec } from "./specs/truck.js";
+import { applyTruckStatusEngine, validateTruck, truckSpec, TRUCK_NUMERIC_COLS, TRUCK_DATE_COLS } from "./specs/truck.js";
 import type { Queryable } from "../rbac/index.js";
 
 // A programmable fake Queryable: hand it a handler that returns rows (+ optional rowCount) per
@@ -529,5 +529,61 @@ describe("trailer rework validation guards", () => {
         (e) => e.field === "rework",
       ),
     ).toBe(false);
+  });
+});
+
+// Truck Estimate-Information edit surface (epic fcr-estimating#60 S2): the 19 editable fields are in the
+// truck spec, in the SF page-layout sections, and coerce per type. Pins the set so a regression that drops
+// a field (silently making it uneditable / unable to reverse-sync) fails here.
+describe("truckSpec — Estimate Information edit fields (#60 S2)", () => {
+  const ESTIMATE = [
+    "estimate_sent_date", "estimate_completed", "estimate_approved", "estimate_finalized",
+    "body_hours", "body_s_hours", "frame_hours", "mechanical_hours", "refinish_hours",
+    "total_lines_on_estimate", "estimate_notes", "revised_estimate_notes", "total_sales",
+  ];
+  const FINALIZED = [
+    "finalized_body_hours", "finalized_frame_hours", "finalized_mechanical_hours",
+    "finalized_refinish_hours", "total_billed_hours", "finalized_total_sales",
+  ];
+
+  it("all 19 are in the form spec, in the estimate / finalized sections", () => {
+    const bySection = new Map(truckSpec.formFields.map((f) => [f.column, f.section]));
+    for (const c of ESTIMATE) expect(bySection.get(c), `${c} missing/mis-sectioned`).toBe("estimate");
+    for (const c of FINALIZED) expect(bySection.get(c), `${c} missing/mis-sectioned`).toBe("finalized");
+  });
+
+  it("sales-$ are editable number fields (the estimating dept owns the figure)", () => {
+    const byCol = new Map(truckSpec.formFields.map((f) => [f.column, f]));
+    expect(byCol.get("total_sales")?.input).toBe("number");
+    expect(byCol.get("finalized_total_sales")?.input).toBe("number");
+  });
+
+  it("parseEdits coerces each per type: dates→date, hours/lines/sales→number, notes→text", () => {
+    const edits = parseEdits(
+      form({
+        estimate_completed: "2026-11-10",
+        body_s_hours: "12.5",
+        total_lines_on_estimate: "42",
+        total_sales: "15000",
+        finalized_total_sales: "15250.5",
+        estimate_notes: "two panels",
+      }),
+      truckSpec.formFields, truckSpec.numericCols, truckSpec.dateCols, truckSpec.boolCols,
+    );
+    expect(edits.estimate_completed).toBe("2026-11-10");
+    expect(edits.body_s_hours).toBe(12.5);
+    expect(edits.total_lines_on_estimate).toBe(42);
+    expect(edits.total_sales).toBe(15000);
+    expect(edits.finalized_total_sales).toBe(15250.5);
+    expect(edits.estimate_notes).toBe("two panels");
+  });
+
+  it("the computed rollups are NOT editable columns (SF formulas)", () => {
+    const cols = new Set(truckSpec.formFields.map((f) => f.column));
+    expect(cols.has("total_estimated_hours")).toBe(false);
+    expect(cols.has("finalized_total_hours")).toBe(false);
+    // and they are not mis-classified as numeric/date edit cols either
+    expect(TRUCK_NUMERIC_COLS.has("total_estimated_hours")).toBe(false);
+    expect(TRUCK_DATE_COLS.has("total_estimated_hours")).toBe(false);
   });
 });
