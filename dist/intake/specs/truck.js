@@ -141,6 +141,16 @@ export function applyTruckStatusEngine(before, edits, opts = {}) {
         derived.status_date = todayStr;
     return { derived, statusChanged: !!manual, fromStatus, toStatus: manual ?? fromStatus, emails: [] };
 }
+// A changed-scoped restricted-picklist guard, shared by the estimator_name / truck_make / tires rules so the
+// scoping can't drift between copies (and the next restricted field — License Tag — is one row, not a 4th copy).
+// Returns an error only when the edit CHANGED `field` to a non-blank value outside `allowed`; blank is a clear.
+function restrictedPicklistError(state, changed, field, label, allowed) {
+    const v = state[field];
+    if (changed([field]) && typeof v === "string" && !isBlank(v) && !allowed.includes(v)) {
+        return { field, message: `${label} must be one of: ${allowed.join(", ")}.` };
+    }
+    return null;
+}
 export function validateTruck(state, opts = {}) {
     const errors = [];
     const status = state.status;
@@ -152,34 +162,25 @@ export function validateTruck(state, opts = {}) {
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
         errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
     }
-    // estimator_name reverse-syncs to the SF Estimator_Name__c RESTRICTED picklist — refuse a value outside the
-    // active set so an app write (board assign / record edit) can't dead-letter at SF. Blank is allowed (clears).
-    // ⚠ Scope this to the value actually being SET: updateUnit validates the MERGED before-image, and legacy rows
-    // hold out-of-domain values (the retired estimating runTransition wrote full names like "Jordan"). Only
-    // validating a CHANGED value keeps an unchanged legacy estimator_name from freezing edits to unrelated fields
-    // (there is no DB backstop, unlike VIN's varchar(17)). On create (no before) every value is "changed".
-    if (changed(["estimator_name"]) &&
-        typeof state.estimator_name === "string" &&
-        !isBlank(state.estimator_name) &&
-        !ESTIMATOR_NAMES.includes(state.estimator_name)) {
-        errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
-    }
-    // truck_make + tires reverse-sync to SF RESTRICTED picklists (Truck_Make__c / Tires__c), so an off-domain
-    // write dead-letters at SF. Refuse a value outside the set — but ONLY when the edit CHANGED it (same reasoning
-    // as estimator_name): legacy rows hold free-text makes the old SF had, and there's no DB backstop (both are
-    // plain text columns), so validating the merged before-image unconditionally would freeze edits to unrelated
-    // fields on such a row. Blank is allowed (clears). On create (no before) every value is "changed".
-    if (changed(["truck_make"]) &&
-        typeof state.truck_make === "string" &&
-        !isBlank(state.truck_make) &&
-        !TRUCK_MAKES.includes(state.truck_make)) {
-        errors.push({ field: "truck_make", message: `Make must be one of: ${TRUCK_MAKES.join(", ")}.` });
-    }
-    if (changed(["tires"]) &&
-        typeof state.tires === "string" &&
-        !isBlank(state.tires) &&
-        !YES_NO.includes(state.tires)) {
-        errors.push({ field: "tires", message: `Tires must be one of: ${YES_NO.join(", ")}.` });
+    // estimator_name / truck_make / tires each reverse-sync to an SF RESTRICTED picklist (Estimator_Name__c /
+    // Truck_Make__c / Tires__c), so an off-domain write dead-letters at SF. restrictedPicklistError refuses a
+    // value outside the set — but ONLY when the edit CHANGED it (updateUnit validates the MERGED before-image, and
+    // legacy rows hold out-of-domain values the old SF allowed — full names like "Jordan", free-text makes — with
+    // no DB backstop since these are plain text columns; validating unconditionally would freeze edits to
+    // unrelated fields on such a row). On create (no before) every value is "changed".
+    //
+    // ⚠ This only stops the validation from BLOCKING an edit — it does NOT by itself PRESERVE a legacy value. A
+    // restricted <select> whose stored value isn't an option renders blank, and an unrelated save then submits ""
+    // → the column is nulled (blank is a legitimate clear, indistinguishable here from a real clear). Preserving a
+    // legacy value is the CONSUMING FORM's job: it must render the current value as a selectable option so it is
+    // re-submitted unchanged (fcr-estimating's TruckForm does this). See the coerce round-trip test for the contract.
+    for (const e of [
+        restrictedPicklistError(state, changed, "estimator_name", "Estimator", ESTIMATOR_NAMES),
+        restrictedPicklistError(state, changed, "truck_make", "Make", TRUCK_MAKES),
+        restrictedPicklistError(state, changed, "tires", "Tires", YES_NO),
+    ]) {
+        if (e)
+            errors.push(e);
     }
     // Awaiting-Pickup requires a pickup address (or a customer drop-off). ⚠ Scope this to an edit that actually
     // TOUCHES the coupling — status, pickup mode, or an address field — mirroring the estimator_name rule above.
