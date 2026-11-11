@@ -113,6 +113,59 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     // ...and changing it to a valid initial passes.
     expect(validateTruck({ estimator_name: "JR" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
   });
+  it("truck: truck_make must be an SF Make picklist value when changed; off-list CHANGED value refused", () => {
+    // blank clears — no error
+    expect(validateTruck({ truck_make: "" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(false);
+    // a valid SF make passes
+    expect(validateTruck({ truck_make: "Freightliner" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(false);
+    // an off-list make is REFUSED so it can't dead-letter at SF's Truck_Make__c picklist
+    expect(validateTruck({ truck_make: "Hino" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(true);
+    // NOTE: this only proves validateTruck is PERMISSIVE on an unchanged legacy value — NOT that the value
+    // survives a form submission (that's the coerce round-trip test below). A legacy free-text make on an
+    // UNRELATED edit is not BLOCKED (scoped to changed):
+    const before = { truck_make: "freightliner", status: "Estimating" };
+    expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "truck_make")).toBe(false);
+    // but CHANGING make to an off-list value is still refused
+    expect(validateTruck({ truck_make: "Hino" }, { isNew: false, before }).some((e) => e.field === "truck_make")).toBe(true);
+  });
+  it("truck: tires must be Yes/No when changed; off-list CHANGED value refused", () => {
+    expect(validateTruck({ tires: "" }, { isNew: false }).some((e) => e.field === "tires")).toBe(false);
+    expect(validateTruck({ tires: "Yes" }, { isNew: false }).some((e) => e.field === "tires")).toBe(false);
+    expect(validateTruck({ tires: "maybe" }, { isNew: false }).some((e) => e.field === "tires")).toBe(true);
+    const before = { tires: "weird-legacy", status: "Estimating" };
+    expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "tires")).toBe(false);
+  });
+  it("truck: restricted-select CONTRACT — preserving a legacy make is the form's job, not validateTruck's", () => {
+    // The real submission path is parseEdits(FormData) → merge over the before-row. This pins what each shape of
+    // a submitted `truck_make` does, so the data-safety responsibility is explicit (review round 1, the MEDIUM):
+    const p = (fd: FormData) => parseEdits(fd, truckSpec.formFields, truckSpec.numericCols, truckSpec.dateCols, truckSpec.boolCols);
+    const before = { truck_make: "freightliner" }; // legacy off-list value
+
+    // (a) field ABSENT from the form (e.g. a locked/disabled input isn't submitted) → not in edits → merge keeps it.
+    const absent = p(form({ shop: "Sparta" }));
+    expect("truck_make" in absent).toBe(false);
+    expect({ ...before, ...absent }.truck_make).toBe("freightliner"); // preserved
+
+    // (b) field RE-SUBMITTED with the stored value (what a form that renders the current value as an option does)
+    //     → merge keeps it, and validateTruck doesn't block it (unchanged).
+    const resubmit = p(form({ truck_make: "freightliner", shop: "Sparta" }));
+    expect({ ...before, ...resubmit }.truck_make).toBe("freightliner"); // preserved
+    expect(validateTruck({ ...before, ...resubmit }, { isNew: false, before }).some((e) => e.field === "truck_make")).toBe(false);
+
+    // (c) field submitted BLANK (what a <select> with no matching option does if the form DOESN'T inject the
+    //     stored value) → coerces to "" → merge WIPES the legacy make. This is the data-loss path; the consuming
+    //     form prevents it by keeping the current value selectable, NOT validateTruck (blank is a legitimate clear).
+    const blank = p(form({ truck_make: "", shop: "Sparta" }));
+    expect({ ...before, ...blank }.truck_make).toBeNull(); // WIPED (blank text → null) — why the form guard is load-bearing
+  });
+  it("truck: the new Estimate-Information fields are editable form fields (Make select + Tires select + Revised Estimate Date)", () => {
+    const byCol = new Map(truckSpec.formFields.map((f) => [f.column, f]));
+    expect(byCol.get("truck_make")?.input).toBe("select");
+    expect(byCol.get("truck_make")?.options).toEqual(["", "Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"]);
+    expect(byCol.get("tires")).toMatchObject({ section: "estimate", input: "select", options: ["", "Yes", "No"] });
+    expect(byCol.get("revised_esimate_date")).toMatchObject({ section: "estimate", input: "date" });
+    expect(TRUCK_DATE_COLS.has("revised_esimate_date")).toBe(true);
+  });
   it("truck: Awaiting-Pickup-needs-address still fires when the coupling is newly violated", () => {
     const addrErr = (state: Record<string, unknown>, opts: { isNew?: boolean; before?: Record<string, unknown> }) =>
       validateTruck(state, opts).some((e) => e.field === "pickup_street_address");

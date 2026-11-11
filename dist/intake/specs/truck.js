@@ -10,6 +10,12 @@ const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
+// Truck Make — the SF Truck_Make__c RESTRICTED picklist. Membership VERIFIED byte-for-byte against the live org
+// describe 2026-11-11 (active values: Freightliner, International, Peterbilt, Kenworth, Volvo, Mack, Other — SF
+// orders Peterbilt before Kenworth; order here is cosmetic since the guard is a set-membership check). A write
+// outside this set dead-letters at SF's picklist, so the form offers only these and validateTruck refuses an
+// off-list CHANGED value (scoped like estimator_name — a legacy free-text make on an unrelated edit is left be).
+const TRUCK_MAKES = ["Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"];
 // The SF Estimator_Name__c RESTRICTED picklist (active values, verified against the live org 2026-10-21):
 // estimator initials, NOT names. estimator_name WILL reverse-sync to SF's Estimator_Name__c once the paired
 // fcr-dispatch map addition lands (fcr-estimating#18 S2 — it is not in any reverse-sync allowlist in THIS PR
@@ -36,6 +42,7 @@ export const TRUCK_NUMERIC_COLS = new Set([
 export const TRUCK_DATE_COLS = new Set([
     "notify_date", "status_date",
     "estimate_sent_date", "estimate_completed", "estimate_approved", "estimate_finalized",
+    "revised_esimate_date",
 ]);
 // `rework` is a real boolean column edited via a Yes/No <select>; coerced to true/false/null (blank) so the
 // value binds to the boolean column (mirrors TRAILER_BOOL_COLS). Added with the billing section (epic #28 B).
@@ -51,7 +58,7 @@ export const TRUCK_FORM_FIELDS = [
     { column: "fcr_collision_contacts", label: "Contact (SF id)", section: "information", input: "text" },
     { column: "status", label: "Status", section: "information", input: "select", options: ["", ...TRUCK_INTAKE_STATUSES] },
     { column: "vin", label: "VIN", section: "information", input: "text" },
-    { column: "truck_make", label: "Make", section: "information", input: "text" },
+    { column: "truck_make", label: "Make", section: "information", input: "select", options: ["", ...TRUCK_MAKES] },
     { column: "shop", label: "Shop", section: "information", input: "select", options: ["", ...SHOPS] },
     { column: "sales_team", label: "Sales Team", section: "information", input: "select", options: ["", ...SALES_TEAMS] },
     { column: "estimator_name", label: "Estimator", section: "information", input: "select", options: ["", ...ESTIMATOR_NAMES] },
@@ -89,7 +96,11 @@ export const TRUCK_FORM_FIELDS = [
     { column: "refinish_hours", label: "Refinish Hours", section: "estimate", input: "number" },
     { column: "total_lines_on_estimate", label: "Lines on Estimate", section: "estimate", input: "number" },
     { column: "estimate_notes", label: "Estimate Notes", section: "estimate", input: "textarea" },
+    { column: "revised_esimate_date", label: "Revised Estimate Date", section: "estimate", input: "date" },
     { column: "revised_estimate_notes", label: "Revised Estimate Notes", section: "estimate", input: "textarea" },
+    // Tires — SF Tires__c Yes/No picklist (Jordan, 2026-11-11). License Tag (also SF Yes/No) lands in its own
+    // cross-repo slice once the fcr_core.license_tag column + sync exist.
+    { column: "tires", label: "Tires", section: "estimate", input: "select", options: ["", ...YES_NO] },
     { column: "total_sales", label: "Total Sales", section: "estimate", input: "number" },
     // Finalized Estimate Information (epic fcr-estimating#60 S2) — finalized per-area hours + billed hours +
     // Finalized Total Sales. finalized_total_hours (rollup) is omitted for the same reason as total_estimated_hours.
@@ -132,6 +143,16 @@ export function applyTruckStatusEngine(before, edits, opts = {}) {
         derived.status_date = todayStr;
     return { derived, statusChanged: !!manual, fromStatus, toStatus: manual ?? fromStatus, emails: [] };
 }
+// A changed-scoped restricted-picklist guard, shared by the estimator_name / truck_make / tires rules so the
+// scoping can't drift between copies (and the next restricted field — License Tag — is one row, not a 4th copy).
+// Returns an error only when the edit CHANGED `field` to a non-blank value outside `allowed`; blank is a clear.
+function restrictedPicklistError(state, changed, field, label, allowed) {
+    const v = state[field];
+    if (changed([field]) && typeof v === "string" && !isBlank(v) && !allowed.includes(v)) {
+        return { field, message: `${label} must be one of: ${allowed.join(", ")}.` };
+    }
+    return null;
+}
 export function validateTruck(state, opts = {}) {
     const errors = [];
     const status = state.status;
@@ -143,17 +164,29 @@ export function validateTruck(state, opts = {}) {
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
         errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
     }
-    // estimator_name reverse-syncs to the SF Estimator_Name__c RESTRICTED picklist — refuse a value outside the
-    // active set so an app write (board assign / record edit) can't dead-letter at SF. Blank is allowed (clears).
-    // ⚠ Scope this to the value actually being SET: updateUnit validates the MERGED before-image, and legacy rows
-    // hold out-of-domain values (the retired estimating runTransition wrote full names like "Jordan"). Only
-    // validating a CHANGED value keeps an unchanged legacy estimator_name from freezing edits to unrelated fields
-    // (there is no DB backstop, unlike VIN's varchar(17)). On create (no before) every value is "changed".
-    if (changed(["estimator_name"]) &&
-        typeof state.estimator_name === "string" &&
-        !isBlank(state.estimator_name) &&
-        !ESTIMATOR_NAMES.includes(state.estimator_name)) {
-        errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
+    // estimator_name / truck_make / tires each target an SF RESTRICTED picklist (Estimator_Name__c, Truck_Make__c,
+    // and Tires__c which is a Yes/No picklist — all verified against the live org 2026-11-11), so an off-domain
+    // write dead-letters at SF. estimator_name + truck_make are already in fcr-dispatch's field-scoped
+    // edit-push set (TRUCK_EDIT_COLS.truck); tires joins it in the paired dispatch change (its reverse-sync is why
+    // the restriction matters, even though an edit only pushes once that map lands — the create path pushes now).
+    // restrictedPicklistError refuses a value outside the set — but ONLY when the edit CHANGED it (updateUnit
+    // validates the MERGED before-image, and
+    // legacy rows hold out-of-domain values the old SF allowed — full names like "Jordan", free-text makes — with
+    // no DB backstop since these are plain text columns; validating unconditionally would freeze edits to
+    // unrelated fields on such a row). On create (no before) every value is "changed".
+    //
+    // ⚠ This only stops the validation from BLOCKING an edit — it does NOT by itself PRESERVE a legacy value. A
+    // restricted <select> whose stored value isn't an option renders blank, and an unrelated save then submits ""
+    // → the column is nulled (blank is a legitimate clear, indistinguishable here from a real clear). Preserving a
+    // legacy value is the CONSUMING FORM's job: it must render the current value as a selectable option so it is
+    // re-submitted unchanged (fcr-estimating's TruckForm does this). See the coerce round-trip test for the contract.
+    for (const e of [
+        restrictedPicklistError(state, changed, "estimator_name", "Estimator", ESTIMATOR_NAMES),
+        restrictedPicklistError(state, changed, "truck_make", "Make", TRUCK_MAKES),
+        restrictedPicklistError(state, changed, "tires", "Tires", YES_NO),
+    ]) {
+        if (e)
+            errors.push(e);
     }
     // Awaiting-Pickup requires a pickup address (or a customer drop-off). ⚠ Scope this to an edit that actually
     // TOUCHES the coupling — status, pickup mode, or an address field — mirroring the estimator_name rule above.
