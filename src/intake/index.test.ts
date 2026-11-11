@@ -113,6 +113,34 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     // ...and changing it to a valid initial passes.
     expect(validateTruck({ estimator_name: "JR" }, { isNew: false, before }).some((e) => e.field === "estimator_name")).toBe(false);
   });
+  it("truck: truck_make must be an SF Make picklist value when changed; blank allowed, legacy value doesn't freeze unrelated edits", () => {
+    // blank clears — no error
+    expect(validateTruck({ truck_make: "" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(false);
+    // a valid SF make passes
+    expect(validateTruck({ truck_make: "Freightliner" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(false);
+    // an off-list make is REFUSED so it can't dead-letter at SF's Truck_Make__c picklist
+    expect(validateTruck({ truck_make: "Hino" }, { isNew: false }).some((e) => e.field === "truck_make")).toBe(true);
+    // a legacy free-text make (lowercase) on an UNRELATED edit is left be (scoped to changed)
+    const before = { truck_make: "freightliner", status: "Estimating" };
+    expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "truck_make")).toBe(false);
+    // but CHANGING make to an off-list value is still refused
+    expect(validateTruck({ truck_make: "Hino" }, { isNew: false, before }).some((e) => e.field === "truck_make")).toBe(true);
+  });
+  it("truck: tires must be Yes/No when changed; blank allowed, legacy value doesn't freeze unrelated edits", () => {
+    expect(validateTruck({ tires: "" }, { isNew: false }).some((e) => e.field === "tires")).toBe(false);
+    expect(validateTruck({ tires: "Yes" }, { isNew: false }).some((e) => e.field === "tires")).toBe(false);
+    expect(validateTruck({ tires: "maybe" }, { isNew: false }).some((e) => e.field === "tires")).toBe(true);
+    const before = { tires: "weird-legacy", status: "Estimating" };
+    expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "tires")).toBe(false);
+  });
+  it("truck: the new Estimate-Information fields are editable form fields (Make select + Tires select + Revised Estimate Date)", () => {
+    const byCol = new Map(truckSpec.formFields.map((f) => [f.column, f]));
+    expect(byCol.get("truck_make")?.input).toBe("select");
+    expect(byCol.get("truck_make")?.options).toEqual(["", "Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"]);
+    expect(byCol.get("tires")).toMatchObject({ section: "estimate", input: "select", options: ["", "Yes", "No"] });
+    expect(byCol.get("revised_esimate_date")).toMatchObject({ section: "estimate", input: "date" });
+    expect(TRUCK_DATE_COLS.has("revised_esimate_date")).toBe(true);
+  });
   it("truck: Awaiting-Pickup-needs-address still fires when the coupling is newly violated", () => {
     const addrErr = (state: Record<string, unknown>, opts: { isNew?: boolean; before?: Record<string, unknown> }) =>
       validateTruck(state, opts).some((e) => e.field === "pickup_street_address");

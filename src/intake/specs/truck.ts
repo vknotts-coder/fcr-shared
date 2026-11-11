@@ -13,6 +13,10 @@ const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
+// Truck Make — the SF Truck_Make__c RESTRICTED picklist (Jordan, 2026-11-11: "same as salesforce"). A write
+// outside this set dead-letters at SF's picklist, so the form offers only these and validateTruck refuses an
+// off-list CHANGED value (scoped like estimator_name — a legacy free-text make on an unrelated edit is left be).
+const TRUCK_MAKES = ["Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"];
 
 // The SF Estimator_Name__c RESTRICTED picklist (active values, verified against the live org 2026-10-21):
 // estimator initials, NOT names. estimator_name WILL reverse-sync to SF's Estimator_Name__c once the paired
@@ -42,6 +46,7 @@ export const TRUCK_NUMERIC_COLS = new Set<string>([
 export const TRUCK_DATE_COLS = new Set<string>([
   "notify_date", "status_date",
   "estimate_sent_date", "estimate_completed", "estimate_approved", "estimate_finalized",
+  "revised_esimate_date",
 ]);
 // `rework` is a real boolean column edited via a Yes/No <select>; coerced to true/false/null (blank) so the
 // value binds to the boolean column (mirrors TRAILER_BOOL_COLS). Added with the billing section (epic #28 B).
@@ -59,7 +64,7 @@ export const TRUCK_FORM_FIELDS: FormField[] = [
   { column: "fcr_collision_contacts", label: "Contact (SF id)", section: "information", input: "text" },
   { column: "status", label: "Status", section: "information", input: "select", options: ["", ...TRUCK_INTAKE_STATUSES] },
   { column: "vin", label: "VIN", section: "information", input: "text" },
-  { column: "truck_make", label: "Make", section: "information", input: "text" },
+  { column: "truck_make", label: "Make", section: "information", input: "select", options: ["", ...TRUCK_MAKES] },
   { column: "shop", label: "Shop", section: "information", input: "select", options: ["", ...SHOPS] },
   { column: "sales_team", label: "Sales Team", section: "information", input: "select", options: ["", ...SALES_TEAMS] },
   { column: "estimator_name", label: "Estimator", section: "information", input: "select", options: ["", ...ESTIMATOR_NAMES] },
@@ -98,7 +103,11 @@ export const TRUCK_FORM_FIELDS: FormField[] = [
   { column: "refinish_hours", label: "Refinish Hours", section: "estimate", input: "number" },
   { column: "total_lines_on_estimate", label: "Lines on Estimate", section: "estimate", input: "number" },
   { column: "estimate_notes", label: "Estimate Notes", section: "estimate", input: "textarea" },
+  { column: "revised_esimate_date", label: "Revised Estimate Date", section: "estimate", input: "date" },
   { column: "revised_estimate_notes", label: "Revised Estimate Notes", section: "estimate", input: "textarea" },
+  // Tires — SF Tires__c Yes/No picklist (Jordan, 2026-11-11). License Tag (also SF Yes/No) lands in its own
+  // cross-repo slice once the fcr_core.license_tag column + sync exist.
+  { column: "tires", label: "Tires", section: "estimate", input: "select", options: ["", ...YES_NO] },
   { column: "total_sales", label: "Total Sales", section: "estimate", input: "number" },
 
   // Finalized Estimate Information (epic fcr-estimating#60 S2) — finalized per-area hours + billed hours +
@@ -174,6 +183,28 @@ export function validateTruck(
     !ESTIMATOR_NAMES.includes(state.estimator_name)
   ) {
     errors.push({ field: "estimator_name", message: `Estimator must be one of: ${ESTIMATOR_NAMES.join(", ")}.` });
+  }
+
+  // truck_make + tires reverse-sync to SF RESTRICTED picklists (Truck_Make__c / Tires__c), so an off-domain
+  // write dead-letters at SF. Refuse a value outside the set — but ONLY when the edit CHANGED it (same reasoning
+  // as estimator_name): legacy rows hold free-text makes the old SF had, and there's no DB backstop (both are
+  // plain text columns), so validating the merged before-image unconditionally would freeze edits to unrelated
+  // fields on such a row. Blank is allowed (clears). On create (no before) every value is "changed".
+  if (
+    changed(["truck_make"]) &&
+    typeof state.truck_make === "string" &&
+    !isBlank(state.truck_make) &&
+    !TRUCK_MAKES.includes(state.truck_make)
+  ) {
+    errors.push({ field: "truck_make", message: `Make must be one of: ${TRUCK_MAKES.join(", ")}.` });
+  }
+  if (
+    changed(["tires"]) &&
+    typeof state.tires === "string" &&
+    !isBlank(state.tires) &&
+    !YES_NO.includes(state.tires)
+  ) {
+    errors.push({ field: "tires", message: `Tires must be one of: ${YES_NO.join(", ")}.` });
   }
 
   // Awaiting-Pickup requires a pickup address (or a customer drop-off). ⚠ Scope this to an edit that actually
