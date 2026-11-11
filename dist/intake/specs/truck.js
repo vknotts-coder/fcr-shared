@@ -10,7 +10,9 @@ const CUSTOMER_DROP_OFF_MODE = "Customer Drop Off";
 const PICKUP_MODES = ["Tow", "Drive", "Customer Drop Off", "Other"];
 const SHOPS = ["Livingston", "Sparta"];
 const SALES_TEAMS = ["Team A", "Team B", "Team C"];
-// Truck Make — the SF Truck_Make__c RESTRICTED picklist (Jordan, 2026-11-11: "same as salesforce"). A write
+// Truck Make — the SF Truck_Make__c RESTRICTED picklist. Membership VERIFIED byte-for-byte against the live org
+// describe 2026-11-11 (active values: Freightliner, International, Peterbilt, Kenworth, Volvo, Mack, Other — SF
+// orders Peterbilt before Kenworth; order here is cosmetic since the guard is a set-membership check). A write
 // outside this set dead-letters at SF's picklist, so the form offers only these and validateTruck refuses an
 // off-list CHANGED value (scoped like estimator_name — a legacy free-text make on an unrelated edit is left be).
 const TRUCK_MAKES = ["Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"];
@@ -162,9 +164,13 @@ export function validateTruck(state, opts = {}) {
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
         errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
     }
-    // estimator_name / truck_make / tires each reverse-sync to an SF RESTRICTED picklist (Estimator_Name__c /
-    // Truck_Make__c / Tires__c), so an off-domain write dead-letters at SF. restrictedPicklistError refuses a
-    // value outside the set — but ONLY when the edit CHANGED it (updateUnit validates the MERGED before-image, and
+    // estimator_name / truck_make / tires each target an SF RESTRICTED picklist (Estimator_Name__c, Truck_Make__c,
+    // and Tires__c which is a Yes/No picklist — all verified against the live org 2026-11-11), so an off-domain
+    // write dead-letters at SF. estimator_name + truck_make are already in fcr-dispatch's field-scoped
+    // edit-push set (TRUCK_EDIT_COLS.truck); tires joins it in the paired dispatch change (its reverse-sync is why
+    // the restriction matters, even though an edit only pushes once that map lands — the create path pushes now).
+    // restrictedPicklistError refuses a value outside the set — but ONLY when the edit CHANGED it (updateUnit
+    // validates the MERGED before-image, and
     // legacy rows hold out-of-domain values the old SF allowed — full names like "Jordan", free-text makes — with
     // no DB backstop since these are plain text columns; validating unconditionally would freeze edits to
     // unrelated fields on such a row). On create (no before) every value is "changed".
