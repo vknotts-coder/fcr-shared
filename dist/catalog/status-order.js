@@ -6,7 +6,7 @@
 //   • the catalogs (truck.ts / trailer.ts) — the `status` field's `sortExpr` (the sort rank), and
 //   • listviews.ts — the status-dropdown `options` (same array, pipeline order).
 // Pure data + a trusted-SQL builder; no DB/React import, safe in any bundle.
-import { str } from "./fields.js";
+import { str, computed } from "./fields.js";
 // Full SF Status__c picklists (retrieved 2026-09-09), in pipeline order. Truck also carries the legacy
 // "Photo Estimate - Awaiting Approval" value (present on live records, absent from the active picklist).
 // These were previously duplicated as TRUCK_STATUSES / TRAILER_STATUSES in listviews.ts; consolidated here
@@ -64,15 +64,10 @@ export function donorStatusField() {
     const labelExpr = "CASE donor.status " +
         DONOR_STATUS_ORDER.map((s) => `WHEN '${s}' THEN '${DONOR_STATUS_LABELS[s].replace(/'/g, "''")}'`).join(" ") +
         " ELSE donor.status END";
+    // Reuse computed() for the RegistryField shape (so the field-set/defaults can't drift from the catalog's
+    // other computed fields), then add the status-only sort wiring — mirroring how statusField() reuses str().
     return {
-        key: "status",
-        label: "Status",
-        type: "string",
-        section: "status",
-        expr: labelExpr,
-        filterable: true,
-        groupable: true,
-        summable: false,
+        ...computed("string", "status", "Status", "status", labelExpr, { groupable: true, summable: false }),
         sortExpr: statusRankExpr("donor", DONOR_STATUS_ORDER),
         sortOrder: DONOR_STATUS_LABEL_ORDER,
     };

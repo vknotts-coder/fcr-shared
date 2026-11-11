@@ -20,8 +20,10 @@ import { donorStatusField } from "./status-order.js";
 const YARD_RATE =
   "COALESCE((SELECT s.value::numeric FROM fcr_core.app_setting s " +
   "WHERE s.app_key = 'estimating' AND s.key = 'donor_yard_rate_per_mile'), 1.5)";
-// Resolved recovery cost: the flat recovery_cost when entered, else miles × yard rate.
-const RECOVERY = `CASE WHEN donor.recovery_cost > 0 THEN donor.recovery_cost ELSE donor.recovery_miles * ${YARD_RATE} END`;
+// Resolved recovery cost: the flat recovery_cost when entered, else miles × yard rate. The money columns
+// are NOT NULL DEFAULT 0 in fcr_core.donor, so these COALESCEs are defence-in-depth (a schema change can't
+// silently turn a donor's balance NULL) — matching the COALESCE(…,0) the ledger subqueries already use.
+const RECOVERY = `CASE WHEN COALESCE(donor.recovery_cost, 0) > 0 THEN donor.recovery_cost ELSE COALESCE(donor.recovery_miles, 0) * ${YARD_RATE} END`;
 // Per-donor ledger roll-ups. Correlated subqueries keep the donor grain (donor_ledger is one-to-many);
 // soft-deleted ledger lines are excluded. amount is always positive — `kind` carries the sign.
 const CREDITS =
@@ -36,7 +38,7 @@ const SAVED =
   "WHERE l.donor_id = donor.id AND l.deleted_at IS NULL), 0)";
 // Balance = credits − (purchase + resolved recovery + ledger costs). Positive ⇒ the donor has paid itself
 // back and then some. Matches computeDonorFinancials (donor/read.ts).
-const BALANCE = `${CREDITS} - donor.purchase_cost - (${RECOVERY}) - ${COSTS}`;
+const BALANCE = `${CREDITS} - COALESCE(donor.purchase_cost, 0) - (${RECOVERY}) - ${COSTS}`;
 
 /** The donor object's field table (schema-coupled; shared across consumers). */
 export const donorFields: RegistryField[] = [
@@ -66,7 +68,7 @@ export const donorFields: RegistryField[] = [
   // Financials (sensitive — donor money is internal cost; gated per-field like truck financials)
   money("purchase_cost", "Purchase cost", "financials"),
   money("recovery_cost", "Recovery cost (flat)", "financials"),
-  computed("money", "recovery_total", "Recovery (effective)", "financials", RECOVERY, { sensitive: true }),
+  computed("money", "recovery_total", "Recovery (effective)", "financials", RECOVERY, { sensitive: true, summable: true }),
   computed("money", "ledger_credits", "Parts sold (credits)", "financials", CREDITS, { sensitive: true, summable: true }),
   computed("money", "ledger_costs", "Added costs", "financials", COSTS, { sensitive: true, summable: true }),
   computed("money", "net_balance", "Net balance", "financials", BALANCE, { sensitive: true, summable: true }),
