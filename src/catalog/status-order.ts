@@ -29,6 +29,22 @@ export const TRAILER_STATUS_ORDER: string[] = [
   "Delivery Dispatch", "Delivered", "Total Loss", "REWORK", "Hold", "Do Not Repair",
 ];
 
+// ── Donor (salvage) stages — fcr-estimating#41. UNLIKE truck/trailer, the donor `status` column stores a
+// SLUG (on_the_way…scrapped_sold), not a human label. So the catalog field (donorStatusField below) renders
+// the slug AS its label while sorting by stage. This one array drives the sort rank; the label map + the
+// label-ordered array drive the display, the dropdown options, and the grouped-summary order. ─────────────
+export const DONOR_STATUS_ORDER: string[] = ["on_the_way", "intake", "parting_out", "picked_over", "scrapped_sold"];
+export const DONOR_STATUS_LABELS: Record<string, string> = {
+  on_the_way: "On the way",
+  intake: "Intake",
+  parting_out: "Parting Out",
+  picked_over: "Picked Over",
+  scrapped_sold: "Scrapped/Sold Whole",
+};
+// Labels in stage order. The donor status field RENDERS as its label (via the CASE expr), so the dropdown
+// options and the grouped-summary `sortOrder` both live in label-space (not slug-space).
+export const DONOR_STATUS_LABEL_ORDER: string[] = DONOR_STATUS_ORDER.map((s) => DONOR_STATUS_LABELS[s]!);
+
 // A trusted-SQL CASE that ranks the object's `status` column by its pipeline position, so `ORDER BY <this>`
 // sorts by stage (A→Z no longer). An unlisted / legacy / NULL status sorts LAST (rank = order.length).
 // `order` is registry-authored (code, never user input); the quote-doubling escape is defence-in-depth —
@@ -44,4 +60,29 @@ export function statusRankExpr(objKey: string, order: readonly string[]): string
 // pipeline stage, not A→Z. Identical to `str("status","Status","status")` in every other respect.
 export function statusField(objKey: string, order: readonly string[]): RegistryField {
   return { ...str("status", "Status", "status"), sortExpr: statusRankExpr(objKey, order), sortOrder: order };
+}
+
+// The donor `status` RegistryField. A COMPUTED field: its `expr` is a CASE that maps the stored slug to its
+// human label, so the label is what the grid renders, what a filter compares against, and what a by-status
+// group is keyed/labelled by (hence the dropdown options + sortOrder are the LABELS, not the slugs). The
+// `sortExpr` still ranks by the raw slug's stage, so a status sort follows the yard flow, not A→Z. The CASE
+// values are registry literals (status slugs + fixed labels), never user input — same trust boundary as
+// statusRankExpr; the label single-quotes are doubled defence-in-depth.
+export function donorStatusField(): RegistryField {
+  const labelExpr =
+    "CASE donor.status " +
+    DONOR_STATUS_ORDER.map((s) => `WHEN '${s}' THEN '${DONOR_STATUS_LABELS[s]!.replace(/'/g, "''")}'`).join(" ") +
+    " ELSE donor.status END";
+  return {
+    key: "status",
+    label: "Status",
+    type: "string",
+    section: "status",
+    expr: labelExpr,
+    filterable: true,
+    groupable: true,
+    summable: false,
+    sortExpr: statusRankExpr("donor", DONOR_STATUS_ORDER),
+    sortOrder: DONOR_STATUS_LABEL_ORDER,
+  };
 }

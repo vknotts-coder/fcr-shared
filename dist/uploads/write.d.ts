@@ -25,6 +25,7 @@ export type FileWriteResult = {
     ok: false;
     errors: string[];
 };
+export declare const UPLOAD_UNIT_TYPES: Set<string>;
 export declare const MAX_FILE_BYTES: number;
 export declare const ALLOWED_TYPES: readonly ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"];
 export declare function expectedPrefix(unitType: string, unitId: string): string;

@@ -12,7 +12,7 @@
 //
 // @fcr/core stays dependency-free: @vercel/blob/client is NEVER imported here. The return shape is
 // exactly what handleUpload's onBeforeGenerateToken expects, typed structurally.
-import { UUID_RE, ALLOWED_TYPES, MAX_FILE_BYTES, expectedPrefix } from "./write.js";
+import { UUID_RE, UPLOAD_UNIT_TYPES, ALLOWED_TYPES, MAX_FILE_BYTES, expectedPrefix } from "./write.js";
 import { PHOTO_ALLOWED_TYPES, MAX_PHOTO_BYTES, expectedPhotoPrefix } from "./photo.js";
 // Shared builder: `authorize` is the app's auth check — it throws to reject (the thrown message
 // becomes the 400). Then parse the client payload, validate the unit reference, and PIN the pathname
@@ -22,7 +22,7 @@ function makeBeforeToken(authorize, policy) {
     return async (pathname, clientPayload) => {
         await authorize();
         const { unitType, unitId } = JSON.parse(clientPayload || "{}");
-        if ((unitType !== "truck" && unitType !== "trailer") || !unitId || !UUID_RE.test(unitId)) {
+        if (!unitType || !UPLOAD_UNIT_TYPES.has(unitType) || !unitId || !UUID_RE.test(unitId)) {
             throw new Error("Bad unit reference.");
         }
         if (!pathname.startsWith(policy.prefix(unitType, unitId))) {

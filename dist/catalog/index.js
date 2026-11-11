@@ -6,4 +6,5 @@
 // `.../listviews`) when an app needs only one — e.g. a trucks-only app imports just `@fcr/core/catalog/truck`.
 export { truckObject, truckFields } from "./truck.js";
 export { trailerObject, trailerFields } from "./trailer.js";
+export { donorObject, donorFields } from "./donor.js";
 export * from "./listviews.js";

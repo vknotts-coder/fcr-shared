@@ -1,6 +1,6 @@
 {
   "name": "@fcr/core",
-  "version": "0.44.0",
+  "version": "0.45.0",
   "description": "Shared FCR platform code — RBAC engine + office credential/auth path + frozen contracts + session config + event-log write chokepoint + global-search kernel + reportable-object/list-view catalog + unit-file + unit-photo upload subsystem. Consumed by the fcr-* apps as a public immutable-SHA tag tarball. See fcr-dispatch#59.",
   "license": "UNLICENSED",
   "type": "module",
@@ -49,6 +49,10 @@
     "./catalog/trailer": {
       "types": "./dist/catalog/trailer.d.ts",
       "default": "./dist/catalog/trailer.js"
+    },
+    "./catalog/donor": {
+      "types": "./dist/catalog/donor.d.ts",
+      "default": "./dist/catalog/donor.js"
     },
     "./catalog/listviews": {
       "types": "./dist/catalog/listviews.d.ts",

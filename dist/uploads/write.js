@@ -47,6 +47,11 @@ export function resolveContentType(reportedType, filename) {
     const t = reportedType?.trim();
     return t ? t : inferContentType(filename);
 }
+// The unit types that may carry file/photo uploads. truck|trailer are SF-synced; donor is app-owned salvage
+// stock (fcr-estimating#41) — the unit_file/unit_photo CHECK constraints were widened to admit 'donor' in
+// fcr-dispatch/migrations/202611111400_donor_tables.sql. Shared by verifyUploadInput (finalize) AND token.ts
+// makeBeforeToken (token mint) so the guard can NEVER drift between the two upload entry points.
+export const UPLOAD_UNIT_TYPES = new Set(["truck", "trailer", "donor"]);
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB — a scanned multi-page receipt fits; blocks abuse
 // Receipts/docs are PDFs or phone photos. Allowlist keeps someone from parking an executable/HTML on the unit.
 export const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"];
@@ -63,7 +68,7 @@ export function expectedPrefix(unitType, unitId) {
 export async function verifyUploadInput(input, policy, verify) {
     const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
     const errors = [];
-    if (unitType !== "truck" && unitType !== "trailer")
+    if (!UPLOAD_UNIT_TYPES.has(unitType))
         errors.push(policy.msg.unknownType);
     if (!UUID_RE.test(unitId))
         errors.push(policy.msg.badId);

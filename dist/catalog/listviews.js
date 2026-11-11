@@ -14,7 +14,7 @@
 // are registry KEYS (validated by validateDefinition against the viewer's permission-filtered field set
 // before any query runs); this catalog never touches SQL.
 // Status dropdown options = the canonical pipeline-order arrays (single source of truth, also the sort rank).
-import { TRAILER_STATUS_ORDER as TRAILER_STATUSES, TRUCK_STATUS_ORDER as TRUCK_STATUSES } from "./status-order.js";
+import { TRAILER_STATUS_ORDER as TRAILER_STATUSES, TRUCK_STATUS_ORDER as TRUCK_STATUSES, DONOR_STATUS_LABEL_ORDER } from "./status-order.js";
 // ── Filter helpers ───────────────────────────────────────────────────────────────────────────────
 const eq = (field, value) => ({ field, op: "eq", value });
 const neq = (field, value) => ({ field, op: "neq", value });
@@ -233,7 +233,38 @@ const TRAILER_VIEWS = [
         filterLogic: `1 AND 2 AND ${TRAILER_POST_REPAIR_EXCL.logic}`,
     },
 ];
-export const LIST_VIEWS = [...TRUCK_VIEWS, ...TRAILER_VIEWS];
+// ── Donor (salvage) views — fcr-estimating#41 Slice 6. Donor status is a label-rendering computed field
+// (donorStatusField), so the statusSelect options are the LABELS (DONOR_STATUS_LABEL_ORDER) and the terminal
+// exclude is the "scrapped/sold" label. `archived` (depleted) is orthogonal to status and is NOT excluded in
+// baseWhere — depleted donors must stay in the money roll-ups — so the Fleet view surfaces it as a column
+// rather than hiding it. ───────────────────────────────────────────────────────────────────────────────
+const DONOR_COLS = ["unit", "year", "make", "model", "status", "location", "source", "acquired_at", "archived"];
+const DONOR_MONEY_COLS = ["unit", "make", "status", "archived", "purchase_cost", "recovery_total", "ledger_credits", "ledger_costs", "net_balance", "ledger_saved"];
+// Terminal stage hidden by the default "All active" mode (label-space — the field renders as its label).
+const DONOR_TERMINAL = ["Scrapped/Sold Whole"];
+const DONOR_VIEWS = [
+    {
+        slug: "fleet",
+        object: "donor",
+        label: "Salvage Fleet",
+        group: "overview",
+        description: "Every salvage donor truck. Pick a stage to narrow (any stage, including scrapped/sold).",
+        columns: DONOR_COLS,
+        defaultSort: sort("unit", "asc"),
+        statusSelect: { options: DONOR_STATUS_LABEL_ORDER, activeExcludes: DONOR_TERMINAL },
+    },
+    {
+        slug: "money",
+        object: "donor",
+        label: "Money",
+        group: "overview",
+        // No status filter — the money roll-up spans every donor (depleted included). Worst balance first.
+        description: "Per-donor money roll-up — what each cost vs. what its parts have earned back.",
+        columns: DONOR_MONEY_COLS,
+        defaultSort: sort("net_balance", "asc"),
+    },
+];
+export const LIST_VIEWS = [...TRUCK_VIEWS, ...TRAILER_VIEWS, ...DONOR_VIEWS];
 // ── Lookups ────────────────────────────────────────────────────────────────────────────────────────
 export function getListView(object, slug) {
     return LIST_VIEWS.find((v) => v.object === object && v.slug === slug);

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { truckObject, truckFields } from "./truck.js";
 import { trailerObject, trailerFields } from "./trailer.js";
+import { donorObject, donorFields } from "./donor.js";
 import { LIST_VIEWS, getListView, listViewsForObject, resolveSort, resolveStatus, listViewDefinition } from "./listviews.js";
 import { statusRankExpr, TRAILER_STATUS_ORDER, TRUCK_STATUS_ORDER } from "./status-order.js";
 import { toClientObject } from "../reports/registry-core.js";
@@ -218,10 +219,11 @@ describe("trailer object", () => {
 });
 
 describe("list views", () => {
-  it("has the truck + trailer views", () => {
+  it("has the truck + trailer + donor views", () => {
     expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due"]);
     expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "stuck_on_parts", "wip", "to_invoice", "past_due"]);
-    expect(LIST_VIEWS).toHaveLength(13);
+    expect(listViewsForObject("donor").map((v) => v.slug)).toEqual(["fleet", "money"]);
+    expect(LIST_VIEWS).toHaveLength(15);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
   });
 
@@ -297,7 +299,8 @@ describe("list views", () => {
   // fields, legal operators, sort ∈ columns) — this is the gate that catches an illegal op / off-catalog
   // field, which a raw `.filters` deep-equal does NOT. (The `in`-operator break shipped past shape tests.)
   it("EVERY list view produces a definition that validateDefinition accepts", () => {
-    const objFor = (o: string) => (o === "truck" ? truckObject({ capability: allow }) : trailerObject({ capability: allow }));
+    const objFor = (o: string) =>
+      o === "truck" ? truckObject({ capability: allow }) : o === "donor" ? donorObject({ capability: allow }) : trailerObject({ capability: allow });
     for (const view of LIST_VIEWS) {
       const client = toClientObject(objFor(view.object), admin);
       const modes = view.statusSelect
@@ -339,5 +342,46 @@ describe("status pipeline-order sort (#1)", () => {
     // the sort rank can't drift. Verify the trailer "Trailers" view's statusSelect uses the same array.
     const trailersView = getListView("trailer", "trailers")!;
     expect(trailersView.statusSelect?.options).toEqual(TRAILER_STATUS_ORDER);
+  });
+});
+
+describe("donor object (fcr-estimating#41)", () => {
+  const donorField = (key: string) => donorFields.find((f) => f.key === key)!;
+  // A no-grant principal: can() default-denies, so every sensitive (financials) field is withheld.
+  const viewer: Principal = { username: "viewer", accountId: "00000000-0000-0000-0000-0000000000cc", grants: [] };
+
+  it("status renders the slug as a label (expr) but sorts by yard stage (sortExpr)", () => {
+    const st = donorField("status");
+    // expr maps slug → label, so the grid/filter/group all see the human label.
+    expect("expr" in st && st.expr).toContain("WHEN 'parting_out' THEN 'Parting Out'");
+    expect("path" in st && st.path).toBeFalsy(); // computed, not a column
+    // sortExpr ranks by the RAW slug's pipeline position (on_the_way=0 … scrapped_sold=4), not A→Z.
+    expect(st.sortExpr).toBe(statusRankExpr("donor", ["on_the_way", "intake", "parting_out", "picked_over", "scrapped_sold"]));
+    // The grouped-summary order is label-space (groups key on the rendered label).
+    expect(st.sortOrder).toEqual(["On the way", "Intake", "Parting Out", "Picked Over", "Scrapped/Sold Whole"]);
+  });
+
+  it("the donor money fields are sensitive (financials-gated) and summable where they roll up", () => {
+    for (const k of ["purchase_cost", "recovery_cost", "recovery_total", "ledger_credits", "ledger_costs", "net_balance", "ledger_saved"]) {
+      expect(donorField(k).sensitive, `${k} must be sensitive`).toBe(true);
+      expect(donorField(k).type).toBe("money");
+    }
+    // The roll-up money columns must be summable so a report footer / money view can total them.
+    for (const k of ["ledger_credits", "ledger_costs", "net_balance", "ledger_saved"]) {
+      expect(donorField(k).summable, `${k} must be summable`).toBe(true);
+    }
+    // The net-balance expr subtracts purchase + recovery + costs from credits (matches computeDonorFinancials).
+    const bal = donorField("net_balance");
+    expect("expr" in bal && bal.expr).toContain("donor.purchase_cost");
+    expect("expr" in bal && bal.expr).toContain("donor_ledger");
+  });
+
+  it("a financials viewer gets the money fields; a non-financials viewer never sees them", () => {
+    const moneyKeys = ["purchase_cost", "recovery_total", "net_balance", "ledger_saved"];
+    const forAdmin = toClientObject(donorObject({ capability: allow }), admin).fields.map((f) => f.key);
+    for (const k of moneyKeys) expect(forAdmin).toContain(k);
+    // `viewer` is the no-grant principal defined at the top of this file (same one trailer/truck gating uses).
+    const forViewer = toClientObject(donorObject({ capability: allow }), viewer).fields.map((f) => f.key);
+    for (const k of moneyKeys) expect(forViewer).not.toContain(k);
   });
 });

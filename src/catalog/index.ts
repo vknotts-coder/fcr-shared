@@ -7,4 +7,5 @@
 
 export { truckObject, truckFields, type TruckObjectOptions } from "./truck.js";
 export { trailerObject, trailerFields, type TrailerObjectOptions } from "./trailer.js";
+export { donorObject, donorFields, type DonorObjectOptions } from "./donor.js";
 export * from "./listviews.js";
