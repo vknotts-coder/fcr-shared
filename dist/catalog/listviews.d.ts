@@ -1,5 +1,5 @@
 import type { ReportDefinition, ReportFilter, ReportSort } from "../reports/definition.js";
-export type ListViewObject = "truck" | "trailer";
+export type ListViewObject = "truck" | "trailer" | "donor";
 export type ListViewGroup = "overview" | "location";
 /** A user-selectable status dropdown on a view: `options` are the individual statuses (the full SF
  *  picklist), `activeExcludes` are the terminal statuses hidden in the default "All active" mode. */

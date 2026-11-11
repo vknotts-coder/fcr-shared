@@ -72,6 +72,12 @@ export type RecordFileInput = {
 
 export type FileWriteResult = { ok: true; id: string } | { ok: false; errors: string[] };
 
+// The unit types that may carry file/photo uploads. truck|trailer are SF-synced; donor is app-owned salvage
+// stock (fcr-estimating#41) — the unit_file/unit_photo CHECK constraints were widened to admit 'donor' in
+// fcr-dispatch/migrations/202611111400_donor_tables.sql. Shared by verifyUploadInput (finalize) AND token.ts
+// makeBeforeToken (token mint) so the guard can NEVER drift between the two upload entry points.
+export const UPLOAD_UNIT_TYPES = new Set<string>(["truck", "trailer", "donor"]);
+
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB — a scanned multi-page receipt fits; blocks abuse
 // Receipts/docs are PDFs or phone photos. Allowlist keeps someone from parking an executable/HTML on the unit.
 export const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/heic", "image/webp"] as const;
@@ -116,7 +122,7 @@ export async function verifyUploadInput(
 ): Promise<VerifyResult> {
   const { unitType, unitId, blobUrl, blobPathname, contentType, byteSize } = input;
   const errors: string[] = [];
-  if (unitType !== "truck" && unitType !== "trailer") errors.push(policy.msg.unknownType);
+  if (!UPLOAD_UNIT_TYPES.has(unitType)) errors.push(policy.msg.unknownType);
   if (!UUID_RE.test(unitId)) errors.push(policy.msg.badId);
   if (!policy.allowed.has(contentType)) errors.push(policy.msg.badContentType);
   if (!Number.isFinite(byteSize) || byteSize <= 0) errors.push(policy.msg.empty);

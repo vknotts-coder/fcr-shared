@@ -7,6 +7,7 @@ export {
   recordUnitFile,
   expectedPrefix,
   UUID_RE,
+  UPLOAD_UNIT_TYPES,
   MAX_FILE_BYTES,
   ALLOWED_TYPES,
   inferContentType,
