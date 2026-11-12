@@ -106,9 +106,24 @@ describe("getRecordSectionPref", () => {
     const { db } = mockDb([[]]);
     expect(await getRecordSectionPref(db, ACCT, "trailer")).toBeNull();
   });
+
+  it("queries a CUSTOM view_slug when given (app namespacing, e.g. 'e:record-sections')", async () => {
+    const { db, calls } = mockDb([[]]);
+    await getRecordSectionPref(db, ACCT, "truck", "e:record-sections");
+    expect(calls[0]!.params).toEqual([ACCT, "truck", "e:record-sections"]);
+  });
 });
 
 describe("saveRecordSectionPref", () => {
+  it("persists under a CUSTOM view_slug when given", async () => {
+    const { db, calls } = mockDb([
+      [{ id: "1", owner_account_id: ACCT, object_key: "truck", view_slug: "e:record-sections",
+         columns: ["identity"], created_at: "x", updated_at: "x" }],
+    ]);
+    await saveRecordSectionPref(db, ACCT, "truck", { order: ["identity"], collapsed: [] }, "e:record-sections");
+    expect(calls[0]!.params[2]).toBe("e:record-sections");
+  });
+
   it("persists {order, collapsed} as the store's {order, hidden} under the section slug", async () => {
     const { db, calls } = mockDb([
       [{

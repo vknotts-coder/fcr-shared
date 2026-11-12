@@ -12,14 +12,20 @@
 // Keyed on `accountId` (the viewer's fcr_core account), exactly like list-view prefs — the app gates the
 // save to an operator/admin WITH an account before calling, same predicate it uses to load + render.
 import { getListViewPref, saveListViewPref, deleteListViewPref, sanitizeColumns } from "./listViewPrefs.js";
-// The `view_slug` under which section prefs live in list_view_pref. A real list view's slug is a plain
+// The DEFAULT `view_slug` under which section prefs live in list_view_pref. A real list view's slug is a plain
 // catalog token (e.g. "to_invoice", "pipeline"); this sentinel is not a catalog view, so an app's
 // `getListView(object, slug)` validation (which gates its own saves) can never resolve to it — no collision.
+//
+// Each helper takes an optional `viewSlug` so an app that shares an `objectKey` with ANOTHER app (e.g. both
+// fcr-estimating and fcr-dispatch have a "truck" record page; fcr-dispatch and fcr-trailers both have
+// "trailer") can namespace its OWN section prefs the way the list-view prefs already do (fcr-estimating
+// prefixes list slugs "e:", fcr-dispatch "d:" — see each app's listPrefSlug). Pass e.g. "e:record-sections".
+// Omit it (the default) to key the bare "record-sections" slug — fcr-trailers shipped on this default.
 export const SECTION_VIEW_SLUG = "record-sections";
 /** The viewer's saved section arrangement for one record object, or null if they've never customized it.
  *  Owner-scoped — never another user's. Maps the generic store's `{ columns, hidden }` → `{ order, collapsed }`. */
-export async function getRecordSectionPref(db, accountId, objectKey) {
-    const pref = await getListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG);
+export async function getRecordSectionPref(db, accountId, objectKey, viewSlug = SECTION_VIEW_SLUG) {
+    const pref = await getListViewPref(db, accountId, objectKey, viewSlug);
     if (!pref)
         return null;
     return { order: pref.columns, collapsed: pref.hidden };
@@ -27,17 +33,17 @@ export async function getRecordSectionPref(db, accountId, objectKey) {
 /** Upsert the viewer's section arrangement for one record object. Idempotent + race-safe (the underlying
  *  store does an atomic upsert). An EMPTY order resets to default (soft-delete). The store sanitizes the
  *  keys and enforces `collapsed ⊆ order`, so a malformed arrangement can never corrupt a render or the store. */
-export async function saveRecordSectionPref(db, accountId, objectKey, pref) {
+export async function saveRecordSectionPref(db, accountId, objectKey, pref, viewSlug = SECTION_VIEW_SLUG) {
     // {order, collapsed} → the store's {order, hidden}. A save with nothing collapsed stores the bare array
     // (identical to a reorder-only list pref); a collapse stores the {order, hidden} object. Both read back.
-    await saveListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG, {
+    await saveListViewPref(db, accountId, objectKey, viewSlug, {
         order: pref.order,
         hidden: pref.collapsed,
     });
 }
 /** Owner-scoped reset of the viewer's section arrangement for one record object back to the app default. */
-export async function deleteRecordSectionPref(db, accountId, objectKey) {
-    await deleteListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG);
+export async function deleteRecordSectionPref(db, accountId, objectKey, viewSlug = SECTION_VIEW_SLUG) {
+    await deleteListViewPref(db, accountId, objectKey, viewSlug);
 }
 /**
  * PURE. Apply a user's saved section pref onto a record page's live AVAILABLE sections (the sections the

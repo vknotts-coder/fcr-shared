@@ -14,13 +14,13 @@ export type ResolvedSection = {
 };
 /** The viewer's saved section arrangement for one record object, or null if they've never customized it.
  *  Owner-scoped — never another user's. Maps the generic store's `{ columns, hidden }` → `{ order, collapsed }`. */
-export declare function getRecordSectionPref(db: Queryable, accountId: string, objectKey: string): Promise<SectionPref | null>;
+export declare function getRecordSectionPref(db: Queryable, accountId: string, objectKey: string, viewSlug?: string): Promise<SectionPref | null>;
 /** Upsert the viewer's section arrangement for one record object. Idempotent + race-safe (the underlying
  *  store does an atomic upsert). An EMPTY order resets to default (soft-delete). The store sanitizes the
  *  keys and enforces `collapsed ⊆ order`, so a malformed arrangement can never corrupt a render or the store. */
-export declare function saveRecordSectionPref(db: Queryable, accountId: string, objectKey: string, pref: SectionPref): Promise<void>;
+export declare function saveRecordSectionPref(db: Queryable, accountId: string, objectKey: string, pref: SectionPref, viewSlug?: string): Promise<void>;
 /** Owner-scoped reset of the viewer's section arrangement for one record object back to the app default. */
-export declare function deleteRecordSectionPref(db: Queryable, accountId: string, objectKey: string): Promise<void>;
+export declare function deleteRecordSectionPref(db: Queryable, accountId: string, objectKey: string, viewSlug?: string): Promise<void>;
 /**
  * PURE. Apply a user's saved section pref onto a record page's live AVAILABLE sections (the sections the
  * viewer may actually see — already filtered by the app for RBAC/emptiness before calling). Rules, in order:
