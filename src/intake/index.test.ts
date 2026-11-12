@@ -135,6 +135,13 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     const before = { tires: "weird-legacy", status: "Estimating" };
     expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "tires")).toBe(false);
   });
+  it("truck: license_tag must be Yes/No when changed; off-list CHANGED value refused", () => {
+    expect(validateTruck({ license_tag: "" }, { isNew: false }).some((e) => e.field === "license_tag")).toBe(false);
+    expect(validateTruck({ license_tag: "Yes" }, { isNew: false }).some((e) => e.field === "license_tag")).toBe(false);
+    expect(validateTruck({ license_tag: "maybe" }, { isNew: false }).some((e) => e.field === "license_tag")).toBe(true);
+    const before = { license_tag: "weird-legacy", status: "Estimating" };
+    expect(validateTruck({ ...before, shop: "Sparta" }, { isNew: false, before }).some((e) => e.field === "license_tag")).toBe(false);
+  });
   it("truck: restricted-select CONTRACT — preserving a legacy make is the form's job, not validateTruck's", () => {
     // The real submission path is parseEdits(FormData) → merge over the before-row. This pins what each shape of
     // a submitted `truck_make` does, so the data-safety responsibility is explicit (review round 1, the MEDIUM):
@@ -163,6 +170,7 @@ describe("VIN length validation (varchar 17 — no 500)", () => {
     expect(byCol.get("truck_make")?.input).toBe("select");
     expect(byCol.get("truck_make")?.options).toEqual(["", "Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"]);
     expect(byCol.get("tires")).toMatchObject({ section: "estimate", input: "select", options: ["", "Yes", "No"] });
+    expect(byCol.get("license_tag")).toMatchObject({ section: "estimate", input: "select", options: ["", "Yes", "No"] });
     expect(byCol.get("revised_esimate_date")).toMatchObject({ section: "estimate", input: "date" });
     expect(TRUCK_DATE_COLS.has("revised_esimate_date")).toBe(true);
   });
