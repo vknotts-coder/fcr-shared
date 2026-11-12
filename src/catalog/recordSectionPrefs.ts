@@ -15,10 +15,31 @@
 import type { Queryable } from "../rbac/index.js";
 import { getListViewPref, saveListViewPref, deleteListViewPref, sanitizeColumns } from "./listViewPrefs.js";
 
-// The `view_slug` under which section prefs live in list_view_pref. A real list view's slug is a plain
+// The DEFAULT `view_slug` under which section prefs live in list_view_pref. A real list view's slug is a plain
 // catalog token (e.g. "to_invoice", "pipeline"); this sentinel is not a catalog view, so an app's
 // `getListView(object, slug)` validation (which gates its own saves) can never resolve to it — no collision.
+//
+// Each helper takes an optional `viewSlug` so an app that shares an `objectKey` with ANOTHER app (e.g. both
+// fcr-estimating and fcr-dispatch have a "truck" record page; fcr-dispatch and fcr-trailers both have
+// "trailer") can namespace its OWN section prefs the way the list-view prefs already do (fcr-estimating
+// prefixes list slugs "e:", fcr-dispatch "d:" — see each app's listPrefSlug). Pass e.g. "e:record-sections".
+// Omit it (the default) to key the bare "record-sections" slug — fcr-trailers shipped on this default.
 export const SECTION_VIEW_SLUG = "record-sections";
+
+/** Enforce the no-collision invariant on a (possibly custom) section `viewSlug`: it must be the bare
+ *  sentinel OR an app-namespaced `"<prefix>:record-sections"`. Because it always ENDS in the sentinel, an
+ *  app's `getListView(object, slug)` can never resolve it to a real list view — so a section pref can never
+ *  overwrite a real list-view pref, whatever prefix a caller passes. A slug that doesn't retain the suffix
+ *  (e.g. a real view slug like "pipeline") is a programming error and throws. Centralized so get/save/delete
+ *  key identically — an asymmetric slug across them would silently read back nothing. */
+function assertSectionSlug(viewSlug: string): string {
+  if (viewSlug !== SECTION_VIEW_SLUG && !viewSlug.endsWith(`:${SECTION_VIEW_SLUG}`)) {
+    throw new Error(
+      `record-section viewSlug must be "${SECTION_VIEW_SLUG}" or "<prefix>:${SECTION_VIEW_SLUG}", got "${viewSlug}"`,
+    );
+  }
+  return viewSlug;
+}
 
 /** A user's saved section arrangement for one record object: the ordered section keys, and which of them
  *  are collapsed. `collapsed ⊆ order` by construction (the store intersects on save). */
@@ -34,8 +55,9 @@ export async function getRecordSectionPref(
   db: Queryable,
   accountId: string,
   objectKey: string,
+  viewSlug: string = SECTION_VIEW_SLUG,
 ): Promise<SectionPref | null> {
-  const pref = await getListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG);
+  const pref = await getListViewPref(db, accountId, objectKey, assertSectionSlug(viewSlug));
   if (!pref) return null;
   return { order: pref.columns, collapsed: pref.hidden };
 }
@@ -48,10 +70,11 @@ export async function saveRecordSectionPref(
   accountId: string,
   objectKey: string,
   pref: SectionPref,
+  viewSlug: string = SECTION_VIEW_SLUG,
 ): Promise<void> {
   // {order, collapsed} → the store's {order, hidden}. A save with nothing collapsed stores the bare array
   // (identical to a reorder-only list pref); a collapse stores the {order, hidden} object. Both read back.
-  await saveListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG, {
+  await saveListViewPref(db, accountId, objectKey, assertSectionSlug(viewSlug), {
     order: pref.order,
     hidden: pref.collapsed,
   });
@@ -62,8 +85,9 @@ export async function deleteRecordSectionPref(
   db: Queryable,
   accountId: string,
   objectKey: string,
+  viewSlug: string = SECTION_VIEW_SLUG,
 ): Promise<void> {
-  await deleteListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG);
+  await deleteListViewPref(db, accountId, objectKey, assertSectionSlug(viewSlug));
 }
 
 /**
