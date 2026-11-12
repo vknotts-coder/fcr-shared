@@ -80,6 +80,7 @@ export const truckFields = [
     // and the customer-side progress-report sender (one-hop join, like customer_name). Column spellings match
     // fcr_core exactly — note the upstream misspelling `revised_esimate_date`. All non-sensitive/non-financial.
     str("tires", "Tires", "identity"),
+    str("license_tag", "License Tag", "identity"),
     str("truck_make", "Make", "identity"),
     dateF("revised_esimate_date", "Revised estimate", "status"),
     // Computed day-counts (require reports ≥ v0.7.0; expr-authored, parity with trailer.ts). Central-tz
