@@ -98,9 +98,13 @@ export const TRUCK_FORM_FIELDS = [
     { column: "estimate_notes", label: "Estimate Notes", section: "estimate", input: "textarea" },
     { column: "revised_esimate_date", label: "Revised Estimate Date", section: "estimate", input: "date" },
     { column: "revised_estimate_notes", label: "Revised Estimate Notes", section: "estimate", input: "textarea" },
-    // Tires — SF Tires__c Yes/No picklist (Jordan, 2026-11-11). License Tag (also SF Yes/No) lands in its own
-    // cross-repo slice once the fcr_core.license_tag column + sync exist.
+    // Tires + License Tag — SF Tires__c / License_Tag__c Yes/No picklists (Jordan, 2026-11-11 batch; License Tag
+    // the deferred follow-on, est #74). fcr_core.license_tag already exists and License_Tag__c → license_tag is
+    // already mapped in the dispatch sync-targets (forward-syncs today); this slice surfaces + edits it and adds the
+    // reverse-sync edit push. License_Tag__c verified vs the live org 2026-11-12: restricted picklist ["Yes","No"],
+    // updateable, calculated=false — identical to Tires__c, so no dead-letter risk.
     { column: "tires", label: "Tires", section: "estimate", input: "select", options: ["", ...YES_NO] },
+    { column: "license_tag", label: "License Tag", section: "estimate", input: "select", options: ["", ...YES_NO] },
     { column: "total_sales", label: "Total Sales", section: "estimate", input: "number" },
     // Finalized Estimate Information (epic fcr-estimating#60 S2) — finalized per-area hours + billed hours +
     // Finalized Total Sales. finalized_total_hours (rollup) is omitted for the same reason as total_estimated_hours.
@@ -164,10 +168,11 @@ export function validateTruck(state, opts = {}) {
     if (typeof state.vin === "string" && state.vin.trim().length > VIN_MAX_LENGTH) {
         errors.push({ field: "vin", message: `VIN must be ${VIN_MAX_LENGTH} characters or fewer.` });
     }
-    // estimator_name / truck_make / tires each target an SF RESTRICTED picklist (Estimator_Name__c, Truck_Make__c,
-    // and Tires__c which is a Yes/No picklist — all verified against the live org 2026-11-11), so an off-domain
-    // write dead-letters at SF. estimator_name + truck_make are already in fcr-dispatch's field-scoped
-    // edit-push set (TRUCK_EDIT_COLS.truck); tires joins it in the paired dispatch change (its reverse-sync is why
+    // estimator_name / truck_make / tires / license_tag each target an SF RESTRICTED picklist (Estimator_Name__c,
+    // Truck_Make__c, and Tires__c / License_Tag__c which are Yes/No picklists — all verified against the live org
+    // 2026-11-11/12), so an off-domain write dead-letters at SF. estimator_name + truck_make are already in
+    // fcr-dispatch's field-scoped edit-push set (TRUCK_EDIT_COLS.truck); tires + license_tag join it in the paired
+    // dispatch change (their reverse-sync is why
     // the restriction matters, even though an edit only pushes once that map lands — the create path pushes now).
     // restrictedPicklistError refuses a value outside the set — but ONLY when the edit CHANGED it (updateUnit
     // validates the MERGED before-image, and
@@ -184,6 +189,7 @@ export function validateTruck(state, opts = {}) {
         restrictedPicklistError(state, changed, "estimator_name", "Estimator", ESTIMATOR_NAMES),
         restrictedPicklistError(state, changed, "truck_make", "Make", TRUCK_MAKES),
         restrictedPicklistError(state, changed, "tires", "Tires", YES_NO),
+        restrictedPicklistError(state, changed, "license_tag", "License Tag", YES_NO),
     ]) {
         if (e)
             errors.push(e);
