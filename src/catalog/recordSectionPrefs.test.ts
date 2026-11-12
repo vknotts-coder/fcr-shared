@@ -112,6 +112,13 @@ describe("getRecordSectionPref", () => {
     await getRecordSectionPref(db, ACCT, "truck", "e:record-sections");
     expect(calls[0]!.params).toEqual([ACCT, "truck", "e:record-sections"]);
   });
+
+  it("rejects a viewSlug that doesn't retain the record-sections suffix (no-collision guard)", async () => {
+    const { db } = mockDb([[]]);
+    // a real list-view slug must never be accepted — it would overwrite that view's column pref.
+    await expect(getRecordSectionPref(db, ACCT, "truck", "pipeline")).rejects.toThrow(/record-sections/);
+    await expect(getRecordSectionPref(db, ACCT, "truck", "e:to_invoice")).rejects.toThrow(/record-sections/);
+  });
 });
 
 describe("saveRecordSectionPref", () => {
