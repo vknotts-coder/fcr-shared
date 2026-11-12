@@ -21,7 +21,7 @@ export const trailerFields = [
     dateTzF("created_at", "Created", "status"), // timestamptz — local-date in the runner
     dateF("arrival_date", "Arrived", "status"),
     dateF("repair_completion_date", "Repair complete", "status"),
-    dateF("invoice_date", "Invoiced", "status"),
+    dateF("invoice_date", "Invoice Date", "status"),
     dateF("invoice_paid_date", "Invoice paid", "status"),
     // Pickup leg (trailer: pickup_dispatch_date, pickup_eta; no per-trip miles)
     str("pickup_driver", "Pickup driver", "pickup"),
