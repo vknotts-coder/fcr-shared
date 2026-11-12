@@ -13,8 +13,9 @@
 const MAX_COLUMNS = 100;
 const MAX_KEY_LEN = 128;
 /** Coerce a stored/incoming columns value to a clean string[]: array only, non-empty trimmed strings,
- *  deduped (first occurrence wins), each within length, capped. Anything else is dropped. */
-function sanitizeColumns(value) {
+ *  deduped (first occurrence wins), each within length, capped. Anything else is dropped. Exported so the
+ *  sibling record-section façade (recordSectionPrefs) reuses the ONE canonical sanitizer instead of forking it. */
+export function sanitizeColumns(value) {
     if (!Array.isArray(value))
         return [];
     const seen = new Set();

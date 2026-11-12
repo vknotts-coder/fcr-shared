@@ -11,7 +11,7 @@
 //
 // Keyed on `accountId` (the viewer's fcr_core account), exactly like list-view prefs — the app gates the
 // save to an operator/admin WITH an account before calling, same predicate it uses to load + render.
-import { getListViewPref, saveListViewPref, deleteListViewPref } from "./listViewPrefs.js";
+import { getListViewPref, saveListViewPref, deleteListViewPref, sanitizeColumns } from "./listViewPrefs.js";
 // The `view_slug` under which section prefs live in list_view_pref. A real list view's slug is a plain
 // catalog token (e.g. "to_invoice", "pipeline"); this sentinel is not a catalog view, so an app's
 // `getListView(object, slug)` validation (which gates its own saves) can never resolve to it — no collision.
@@ -39,25 +39,6 @@ export async function saveRecordSectionPref(db, accountId, objectKey, pref) {
 export async function deleteRecordSectionPref(db, accountId, objectKey) {
     await deleteListViewPref(db, accountId, objectKey, SECTION_VIEW_SLUG);
 }
-// Defensive: coerce a possibly-raw order/collapsed value to a clean string[] (array of non-empty trimmed
-// strings, deduped first-wins). `resolveSections` is PURE and may be called with unsanitized input in a
-// test or by a caller that didn't go through the store, so it never trusts its shape.
-function clean(value) {
-    if (!Array.isArray(value))
-        return [];
-    const seen = new Set();
-    const out = [];
-    for (const v of value) {
-        if (typeof v !== "string")
-            continue;
-        const k = v.trim();
-        if (!k || seen.has(k))
-            continue;
-        seen.add(k);
-        out.push(k);
-    }
-    return out;
-}
 /**
  * PURE. Apply a user's saved section pref onto a record page's live AVAILABLE sections (the sections the
  * viewer may actually see — already filtered by the app for RBAC/emptiness before calling). Rules, in order:
@@ -75,10 +56,10 @@ function clean(value) {
  * hide, or duplicate a section — same resilience the list-view column merge gives.
  */
 export function resolveSections(available, pref, opts = {}) {
-    const availSet = new Set(clean(available));
+    const availSet = new Set(sanitizeColumns(available));
     const avail = [...availSet]; // deduped, available order preserved
-    const order = clean(pref?.order);
-    const collapsedSet = new Set(clean(pref?.collapsed));
+    const order = sanitizeColumns(pref?.order);
+    const collapsedSet = new Set(sanitizeColumns(pref?.collapsed));
     const out = [];
     const placed = new Set();
     const push = (key) => {

@@ -26,6 +26,10 @@ export type ResolvedColumn = {
     key: string;
     hidden: boolean;
 };
+/** Coerce a stored/incoming columns value to a clean string[]: array only, non-empty trimmed strings,
+ *  deduped (first occurrence wins), each within length, capped. Anything else is dropped. Exported so the
+ *  sibling record-section façade (recordSectionPrefs) reuses the ONE canonical sanitizer instead of forking it. */
+export declare function sanitizeColumns(value: unknown): string[];
 /** The user's saved column order for one (object, view), or null. Owner-scoped — never another user's. */
 export declare function getListViewPref(db: Queryable, accountId: string, objectKey: string, viewSlug: string): Promise<ListViewPref | null>;
 /**
