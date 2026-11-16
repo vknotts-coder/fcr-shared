@@ -32,6 +32,9 @@ export async function createPhotoEstimate(db, input, actor) {
     const customer_name = input.customerName.trim();
     const truck_number = input.truckNumber.trim();
     const vin = input.vin.trim();
+    const customer_sf_id = input.customerSfId?.trim() || null;
+    const contact_ref = input.contactRef?.trim() || null;
+    const contact_name = (input.contactName ?? "").trim();
     const errors = [];
     if (!customer_name)
         errors.push({ field: "customer_name", message: "Customer is required." });
@@ -45,8 +48,11 @@ export async function createPhotoEstimate(db, input, actor) {
     const cols = {
         id,
         customer_name,
+        customer_sf_id,
         truck_number,
         vin,
+        contact_ref,
+        contact_name,
         status: "unassigned",
         submitted_by: actor.username ?? null,
         submitted_by_name: actor.name,

@@ -54,6 +54,12 @@ export function isTerminalStatus(s: string): boolean {
 export interface PhotoEstimateRow {
   id: string;
   customer_name: string;
+  /** Structured customer/contact capture (epic #94). For an existing pick these link the chosen record;
+   *  for a new one they are null/'' and the typed name lives in customer_name / contact_name. Record
+   *  creation is deferred to convert-to-truck, so these are the carry-through for the convert prefill. */
+  customer_sf_id: string | null;
+  contact_ref: string | null;
+  contact_name: string;
   truck_number: string;
   vin: string;
   status: PhotoEstimateStatus;
