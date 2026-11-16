@@ -71,6 +71,20 @@ describe("recordUnitFile", () => {
     expect(params[8]).toBe(ACTOR.name);
   });
 
+  it("admits a 'photo_estimate' unit type (Photo Estimates, #94) — generic prefix guard, no per-type code", async () => {
+    const db = fakeDb();
+    const { state, verify } = fakeVerify();
+    const prefix = `unit-files/photo_estimate/${UNIT}/`;
+    const res = await recordUnitFile(
+      input({ unitType: "photo_estimate", blobUrl: `https://blob.test/${prefix}x.pdf`, blobPathname: `${prefix}x.pdf` }),
+      ACTOR,
+      { db, verify },
+    );
+    expect(res).toEqual({ ok: true, id: "file-id-1" });
+    expect(state.calls).toBe(1); // passed the type + prefix guard and looked the blob up
+    expect(db.calls[0]!.params[0]).toBe("photo_estimate");
+  });
+
   it("trims a blank purpose to null and sanitizes a dirty filename", async () => {
     const db = fakeDb();
     const { verify } = fakeVerify();
