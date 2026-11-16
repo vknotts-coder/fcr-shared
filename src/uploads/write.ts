@@ -73,10 +73,14 @@ export type RecordFileInput = {
 export type FileWriteResult = { ok: true; id: string } | { ok: false; errors: string[] };
 
 // The unit types that may carry file/photo uploads. truck|trailer are SF-synced; donor is app-owned salvage
-// stock (fcr-estimating#41) — the unit_file/unit_photo CHECK constraints were widened to admit 'donor' in
-// fcr-dispatch/migrations/202611111400_donor_tables.sql. Shared by verifyUploadInput (finalize) AND token.ts
-// makeBeforeToken (token mint) so the guard can NEVER drift between the two upload entry points.
-export const UPLOAD_UNIT_TYPES = new Set<string>(["truck", "trailer", "donor"]);
+// stock (fcr-estimating#41); photo_estimate is the app-owned Photo Estimates request (fcr-estimating#94) —
+// a Sales→Estimating request whose damage photos + comparative/finished estimates attach to the request id.
+// Each app-owned type's unit_file/unit_photo CHECK was widened to admit it (donor:
+// fcr-dispatch/migrations/202611111400_donor_tables.sql; photo_estimate: ...202611161500_photo_estimate.sql).
+// The guard is generic (expectedPrefix pins unit-files/<type>/<id>/), so admitting a type here is the only
+// app-layer step. Shared by verifyUploadInput (finalize) AND token.ts makeBeforeToken (token mint) so the
+// guard can NEVER drift between the two upload entry points.
+export const UPLOAD_UNIT_TYPES = new Set<string>(["truck", "trailer", "donor", "photo_estimate"]);
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB — a scanned multi-page receipt fits; blocks abuse
 // Receipts/docs are PDFs or phone photos. Allowlist keeps someone from parking an executable/HTML on the unit.
