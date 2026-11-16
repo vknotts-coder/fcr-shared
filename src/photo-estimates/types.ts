@@ -46,7 +46,7 @@ export const PHOTO_ESTIMATE_BOARD_STATUSES: PhotoEstimateStatus[] = [
 export const PHOTO_ESTIMATE_TERMINAL_STATUSES: PhotoEstimateStatus[] = ["accepted", "declined"];
 
 export function isTerminalStatus(s: string): boolean {
-  return s === "accepted" || s === "declined";
+  return (PHOTO_ESTIMATE_TERMINAL_STATUSES as readonly string[]).includes(s);
 }
 
 /** A fcr_core.photo_estimate row. Timestamps are strings — every read casts them ::text so neon's

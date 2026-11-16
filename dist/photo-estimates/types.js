@@ -33,5 +33,5 @@ export const PHOTO_ESTIMATE_BOARD_STATUSES = [
 ];
 export const PHOTO_ESTIMATE_TERMINAL_STATUSES = ["accepted", "declined"];
 export function isTerminalStatus(s) {
-    return s === "accepted" || s === "declined";
+    return PHOTO_ESTIMATE_TERMINAL_STATUSES.includes(s);
 }
