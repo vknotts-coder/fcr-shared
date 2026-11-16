@@ -44,6 +44,15 @@ export interface PhotoEstimateCreateInput {
   customerName: string;
   truckNumber: string;
   vin: string;
+  /** Structured customer/contact capture (epic #94 — sales submit now mirrors the normal new-entry pickers).
+   *  For an EXISTING pick, `customerSfId`/`contactRef` link the chosen record; for a NEW one they are
+   *  omitted and the typed name is carried (`customerName` / `contactName`). No customer/contact RECORD is
+   *  created here — a photo estimate can be declined, so creation is deferred to convert-to-truck (accept),
+   *  which resolves these into the truck's customer/contact. `customerName` stays denormalized for the board
+   *  card regardless. All optional so older callers keep working. */
+  customerSfId?: string | null;
+  contactRef?: string | null;
+  contactName?: string | null;
 }
 
 /** Create a new request (status 'unassigned'). Jordan's hard rule: Customer, Truck # and VIN are all
@@ -57,6 +66,9 @@ export async function createPhotoEstimate(
   const customer_name = input.customerName.trim();
   const truck_number = input.truckNumber.trim();
   const vin = input.vin.trim();
+  const customer_sf_id = input.customerSfId?.trim() || null;
+  const contact_ref = input.contactRef?.trim() || null;
+  const contact_name = (input.contactName ?? "").trim();
 
   const errors = [];
   if (!customer_name) errors.push({ field: "customer_name", message: "Customer is required." });
@@ -68,8 +80,11 @@ export async function createPhotoEstimate(
   const cols: Record<string, unknown> = {
     id,
     customer_name,
+    customer_sf_id,
     truck_number,
     vin,
+    contact_ref,
+    contact_name,
     status: "unassigned",
     submitted_by: actor.username ?? null,
     submitted_by_name: actor.name,

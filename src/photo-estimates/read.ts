@@ -12,7 +12,8 @@ import {
 
 // Timestamps cast ::text; plain columns selected as-is. Order mirrors the table.
 const SELECT_COLS = `
-  id, customer_name, truck_number, vin, status, assigned_estimator, declined_reason,
+  id, customer_name, customer_sf_id, truck_number, vin, contact_ref, contact_name,
+  status, assigned_estimator, declined_reason,
   converted_truck_id, submitted_by, submitted_by_name,
   assigned_at::text  AS assigned_at,
   completed_at::text AS completed_at,

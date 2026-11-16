@@ -4,6 +4,15 @@ export interface PhotoEstimateCreateInput {
     customerName: string;
     truckNumber: string;
     vin: string;
+    /** Structured customer/contact capture (epic #94 — sales submit now mirrors the normal new-entry pickers).
+     *  For an EXISTING pick, `customerSfId`/`contactRef` link the chosen record; for a NEW one they are
+     *  omitted and the typed name is carried (`customerName` / `contactName`). No customer/contact RECORD is
+     *  created here — a photo estimate can be declined, so creation is deferred to convert-to-truck (accept),
+     *  which resolves these into the truck's customer/contact. `customerName` stays denormalized for the board
+     *  card regardless. All optional so older callers keep working. */
+    customerSfId?: string | null;
+    contactRef?: string | null;
+    contactName?: string | null;
 }
 /** Create a new request (status 'unassigned'). Jordan's hard rule: Customer, Truck # and VIN are all
  *  required. The "at least one of Photos OR a Comparative Estimate" requirement is enforced at the app
