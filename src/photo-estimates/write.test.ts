@@ -17,7 +17,13 @@ interface Call {
 }
 
 /** A fake Queryable: SELECT * returns the supplied current row (loadRow); everything else returns []. */
-function fakeDb(currentStatus: PhotoEstimateStatus | null, rowOverrides: Partial<PhotoEstimateRow> = {}) {
+function fakeDb(
+  currentStatus: PhotoEstimateStatus | null,
+  rowOverrides: Partial<PhotoEstimateRow> = {},
+  // `writeAffectsRow=false` simulates the optimistic guard matching zero rows (a concurrent
+  // change): the event-insert's `WHERE EXISTS … RETURNING 1` yields no rows, so changed=false.
+  writeAffectsRow = true,
+) {
   const calls: Call[] = [];
   const row: PhotoEstimateRow | null =
     currentStatus === null
@@ -51,6 +57,11 @@ function fakeDb(currentStatus: PhotoEstimateStatus | null, rowOverrides: Partial
       calls.push({ text, params });
       if (text.includes("SELECT * FROM fcr_core.photo_estimate")) {
         return { rows: (row ? [row] : []) as T[] };
+      }
+      // commitWithEvent runs the gated UPDATE+event CTE, which RETURNs one row per event
+      // inserted (i.e. ≥1) when the mutation hit a row, and zero when the optimistic guard missed.
+      if (text.includes("INSERT INTO fcr_core.event_log")) {
+        return { rows: (writeAffectsRow ? [{}] : []) as T[] };
       }
       return { rows: [] as T[] };
     },
@@ -119,5 +130,18 @@ describe("transitions enforce the status machine", () => {
 
   it("missing row → not found", async () => {
     expect((await assignPhotoEstimate(fakeDb(null).db, "nope", "JR", ACTOR)).ok).toBe(false);
+  });
+
+  it("concurrent conflict (optimistic guard matches 0 rows) → ok:false, NOT a false success", async () => {
+    // The row still reads 'completed' at loadRow, but the UPDATE's `AND status=$observed` matches
+    // nothing because another actor moved it first — commitWithEvent reports changed=false. This is
+    // the defect the fix closes: returning ok:true here could double-convert a truck in S5.
+    const UID = "11111111-1111-4111-8111-111111111111";
+    const accept = await acceptPhotoEstimate(fakeDb("completed", {}, false).db, UID, ACTOR, "truck-1");
+    expect(accept.ok).toBe(false);
+    const assign = await assignPhotoEstimate(fakeDb("unassigned", {}, false).db, UID, "JR", ACTOR);
+    expect(assign.ok).toBe(false);
+    const decline = await declinePhotoEstimate(fakeDb("in_progress", {}, false).db, UID, "x", ACTOR);
+    expect(decline.ok).toBe(false);
   });
 });

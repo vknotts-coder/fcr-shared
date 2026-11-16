@@ -117,7 +117,7 @@ async function transition(
   // actor stamps are the last two params.
   const params = [id, toStatus, ...extraParams, actor.username ?? null, actor.name, observedStatus];
   const uIdx = params.length - 2; // $ for updated_by
-  await commitWithEvent(
+  const { changed } = await commitWithEvent(
     {
       source: "app",
       resourceType: "photo_estimate",
@@ -135,6 +135,13 @@ async function transition(
     },
     db,
   );
+  // The optimistic `AND status = $observed` guard matched zero rows → a concurrent actor already
+  // moved this request between our loadRow and this UPDATE. Report the conflict instead of a
+  // false success (a caller that reads ok:true as "it transitioned" could e.g. double-convert a
+  // truck in S5). See @fcr/core/events commitWithEvent `changed`.
+  if (!changed) {
+    return err("This request was just changed by someone else — reload and try again.");
+  }
   return { ok: true, id };
 }
 
@@ -253,7 +260,7 @@ export async function linkConvertedTruck(
 ): Promise<PhotoEstimateWriteResult> {
   const row = await loadRow(db, id);
   if (!row) return err("Photo estimate not found.");
-  await commitWithEvent(
+  const { changed } = await commitWithEvent(
     {
       source: "app",
       resourceType: "photo_estimate",
@@ -270,5 +277,6 @@ export async function linkConvertedTruck(
     },
     db,
   );
+  if (!changed) return err("Photo estimate not found."); // deleted between loadRow and write
   return { ok: true, id };
 }

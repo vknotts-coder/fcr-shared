@@ -54,9 +54,17 @@ export declare function eventInsert(input: EventInput, mutation: Mutation): Prom
  * before-image) BEFORE calling this — the statement itself is not interactive.
  *
  * `db` is the SAME `Queryable` seam @fcr/core/rbac + /reports inject — the app passes its
- * `pool()` (or neon `sql()`); the query result is ignored here.
+ * `pool()` (or neon `sql()`).
+ *
+ * `changed` reports whether the gated mutation actually affected a row: the event-insert is
+ * `WHERE EXISTS (SELECT 1 FROM upd) RETURNING 1`, so it emits one row per field change when the
+ * mutation hit a row and ZERO rows when it did not. A caller whose mutation carries an optimistic
+ * guard in its WHERE (e.g. `AND status = $observed`) uses this to tell a real write from a
+ * suppressed no-op — otherwise a lost-update race reads as success. Callers that ignore it are
+ * unaffected (purely additive to the return).
  */
 export declare function commitWithEvent(input: EventInput, mutation: Mutation, db: Queryable): Promise<{
     correlationId: string;
+    changed: boolean;
 }>;
 //# sourceMappingURL=index.d.ts.map

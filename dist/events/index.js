@@ -163,7 +163,8 @@ export async function eventInsert(input, mutation) {
         `  (correlation_id, actor_id, actor_label, source, resource_type, resource_id, resource_key, action, field, before, after, metadata)\n` +
         `SELECT ${shared}, v.field, v.before, v.after, ${metaParam}::jsonb\n` +
         `FROM (VALUES ${tuples.join(", ")}) AS v(field, before, after)\n` +
-        `WHERE EXISTS (SELECT 1 FROM upd)`;
+        `WHERE EXISTS (SELECT 1 FROM upd)\n` +
+        `RETURNING 1`;
     return { text, params, correlationId };
 }
 // ── commit: run the built statement through an INJECTED db ────────────────────────────
@@ -174,10 +175,17 @@ export async function eventInsert(input, mutation) {
  * before-image) BEFORE calling this — the statement itself is not interactive.
  *
  * `db` is the SAME `Queryable` seam @fcr/core/rbac + /reports inject — the app passes its
- * `pool()` (or neon `sql()`); the query result is ignored here.
+ * `pool()` (or neon `sql()`).
+ *
+ * `changed` reports whether the gated mutation actually affected a row: the event-insert is
+ * `WHERE EXISTS (SELECT 1 FROM upd) RETURNING 1`, so it emits one row per field change when the
+ * mutation hit a row and ZERO rows when it did not. A caller whose mutation carries an optimistic
+ * guard in its WHERE (e.g. `AND status = $observed`) uses this to tell a real write from a
+ * suppressed no-op — otherwise a lost-update race reads as success. Callers that ignore it are
+ * unaffected (purely additive to the return).
  */
 export async function commitWithEvent(input, mutation, db) {
     const { text, params, correlationId } = await eventInsert(input, mutation);
-    await db.query(text, params);
-    return { correlationId };
+    const { rows } = await db.query(text, params);
+    return { correlationId, changed: rows.length > 0 };
 }
