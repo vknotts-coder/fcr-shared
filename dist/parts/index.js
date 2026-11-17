@@ -31,12 +31,14 @@ function isUuid(v) {
 // of dispatch_dirty_cols) so a re-save or the create INSERT's own id/link emits no phantom field change and
 // never tries to reverse-sync an identity column. sf_name is SF-assigned (left null on create), never edited.
 const DIFF_EXCLUDE = new Set(["id", "unit_number", "sf_name", "created_by", "updated_by"]);
-/** Load the parent truck's id + sf_id + name. Null when it doesn't exist / is soft-deleted. `truckId` is the
+/** Load the parent truck's id + sf_id. Null when it doesn't exist / is soft-deleted. `truckId` is the
  *  fcr_core uuid. */
 async function loadTruck(db, truckId) {
     if (!isUuid(truckId))
         return null;
-    const { rows } = await db.query(`SELECT id, sf_id, sf_name FROM fcr_core.truck WHERE id = $1 AND deleted_at IS NULL LIMIT 1`, [truckId]);
+    // sf_name is intentionally NOT selected: the new part's Name is SF-assigned (left NULL on create), so no
+    // caller needs the parent's sf_name.
+    const { rows } = await db.query(`SELECT id, sf_id FROM fcr_core.truck WHERE id = $1 AND deleted_at IS NULL LIMIT 1`, [truckId]);
     return rows[0] ?? null;
 }
 /**
@@ -90,6 +92,8 @@ export async function createTruckBackorderPart(db, truckId, formData, actor) {
              VALUES (${placeholders.join(", ")}, NOW(), NOW())`,
         params: keys.map((k) => cols[k]),
     }, db);
+    // Defensive only: a plain INSERT (no ON CONFLICT / WHERE) affects exactly one row or throws, so `changed` is
+    // always true here. Kept as a guard against a future gated-INSERT variant; it cannot fire today.
     if (!changed)
         return { ok: false, errors: [{ field: null, message: "Could not create the parts record. Try again." }] };
     return { ok: true, id };
@@ -132,6 +136,12 @@ export async function updateTruckBackorderPart(db, partId, truckId, formData, ac
     const lenErrors = validateTruckPartLengths(cols);
     if (lenErrors.length > 0)
         return { ok: false, errors: lenErrors };
+    // Reject an edit that would EMPTY the record (clearing every part + the PO) — it would otherwise persist an
+    // empty shell and, once the push flag is lit, reverse-sync nulls to Salesforce. Check the MERGED post-edit row
+    // (before-image + the submitted edits), since an edit submits only the fields it changed.
+    if (isEmptyTruckPartRecord({ ...before, ...cols })) {
+        return { ok: false, errors: [{ field: "part_1", message: "A back-order part needs at least one part number or a PO." }] };
+    }
     // No-op edit: skip the write AND the audit event (an empty save otherwise writes a fieldless event). Diff the
     // business columns before adding bookkeeping.
     const changes = diffChanges(before, cols, { dateCols: TRUCK_PART_DATE_COLS, exclude: DIFF_EXCLUDE });

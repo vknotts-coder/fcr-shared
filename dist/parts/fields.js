@@ -49,8 +49,15 @@ export function coerceTruckPartField(column, raw) {
     }
     if (s === "")
         return null;
-    if (TRUCK_PART_DATE_COLS.has(column))
-        return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    if (TRUCK_PART_DATE_COLS.has(column)) {
+        // Format AND calendar validity: a format-valid-but-impossible date (2026-02-30, 2026-13-01) would otherwise
+        // reach the `date` column as a raw Postgres 22007/22008 → unhandled 500. Round-trip through Date and require
+        // it to render back to the same string (rejects both JS month-rollover and out-of-range), fail-soft to null.
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s))
+            return null;
+        const d = new Date(`${s}T00:00:00Z`);
+        return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s ? s : null;
+    }
     return s;
 }
 /**

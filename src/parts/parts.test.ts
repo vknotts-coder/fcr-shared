@@ -52,6 +52,12 @@ describe("truck parts — field coercion", () => {
     expect(coerceTruckPartField("estimated_arrival_date", "12/01/2026")).toBeNull();
     expect(coerceTruckPartField("all_parts_received_date", "")).toBeNull();
   });
+  it("rejects a format-valid but CALENDAR-INVALID date (no raw Postgres 22007/22008)", () => {
+    expect(coerceTruckPartField("estimated_arrival_date", "2026-02-30")).toBeNull(); // Feb 30 — JS would roll over
+    expect(coerceTruckPartField("estimated_arrival_date", "2026-13-01")).toBeNull(); // month out of range
+    expect(coerceTruckPartField("estimated_arrival_date", "2026-00-10")).toBeNull(); // month 0
+    expect(coerceTruckPartField("all_parts_received_date", "2026-02-28")).toBe("2026-02-28"); // real date still passes
+  });
   it("parts_in_stock_yes_no is restricted to {Yes,No}, else null (no off-domain reverse-sync)", () => {
     expect(coerceTruckPartField("parts_in_stock_yes_no", "Yes")).toBe("Yes");
     expect(coerceTruckPartField("parts_in_stock_yes_no", "No")).toBe("No");
@@ -149,6 +155,15 @@ describe("updateTruckBackorderPart", () => {
     expect(write.text).toContain("local_edit_at = NOW()");
     expect(write.text).toContain("dispatch_dirty_cols = ARRAY(SELECT DISTINCT unnest");
     expect(write.params).toContainEqual(["po_number"]); // the dirty-cols text[] param = only what changed
+  });
+
+  it("rejects an edit that would EMPTY the record (clears every part + PO) → no reverse-synced empty shell", async () => {
+    const { db, calls } = fakeDb({ before });
+    // before = { part_1: "ALT-1", part_2: null, po_number: "P-OLD", ... }; clear all three.
+    const r = await updateTruckBackorderPart(db, PART_ID, TRUCK_ID, fd({ part_1: "", part_2: "", po_number: "" }), ACTOR);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors[0].message).toMatch(/at least one part number or a PO/);
+    expect(calls.some((c) => c.text.includes("UPDATE fcr_core.truck_backorder_part"))).toBe(false);
   });
 
   it("optimistic conflict: zero-row write → 'changed by someone else'", async () => {
