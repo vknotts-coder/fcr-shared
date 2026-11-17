@@ -20,12 +20,16 @@ const SALES_TEAMS = ["Team A", "Team B", "Team C"];
 // off-list CHANGED value (scoped like estimator_name — a legacy free-text make on an unrelated edit is left be).
 const TRUCK_MAKES = ["Freightliner", "International", "Kenworth", "Volvo", "Peterbilt", "Mack", "Other"];
 
-// The SF Estimator_Name__c RESTRICTED picklist (active values, verified against the live org 2026-10-21):
-// estimator initials, NOT names. estimator_name WILL reverse-sync to SF's Estimator_Name__c once the paired
-// fcr-dispatch map addition lands (fcr-estimating#18 S2 — it is not in any reverse-sync allowlist in THIS PR
-// alone); restricting to the picklist here keeps an app write from dead-lettering at SF's restricted picklist
-// when that lands. Exported as the single source of truth for the estimating assignment board's columns.
-export const ESTIMATOR_NAMES = ["JR", "BH", "JS", "AR"];
+// The ACTIVE estimating personnel (SF Estimator_Name__c initials, NOT names). Exported as the single source of
+// truth for the estimating assignment board's columns + the estimator_name restricted-picklist validation; it
+// reverse-syncs to SF's Estimator_Name__c (fcr-dispatch TRUCK_EDIT_COLS, shipped fcr-estimating#18 S2 / #351).
+// BH removed 2026-11-17 (Jordan: "BH can be removed from all of the estimating personnel now") — this drops BH
+// as an ASSIGNABLE option on the board and refuses a NEW estimator_name='BH' write. It does NOT touch existing
+// BH-assigned trucks: restrictedPicklistError is scoped to the CHANGED value, so a legacy 'BH' row is tolerated
+// on an unrelated edit and simply shows in the board's "Unassigned / other" column (reassigning those is a
+// business/data call, separate from this change). SF's picklist still contains BH, so a BH value can also still
+// arrive via forward sync — we only stop OFFERING it in-app.
+export const ESTIMATOR_NAMES = ["JR", "JS", "AR"];
 
 // The truck statuses relevant at intake. The downstream pipeline statuses are intentionally NOT
 // enumerated here (they belong to the deferred truck-flow slice, keyed off the SF audit); the
