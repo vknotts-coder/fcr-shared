@@ -74,6 +74,17 @@ export const truckFields: RegistryField[] = [
   dateF("awaiting_parts_date", "Awaiting parts", "status"),
   str("parts_information", "Parts info", "status"),
   dateF("parts_eta_date", "Parts ETA", "status"),
+  // Open back-order parts — a correlated count of this truck's `truck_backorder_part` rows not yet fully
+  // received (`all_parts_received_date IS NULL`) and not soft-deleted. This is the back-order-parts signal the
+  // truck catalog otherwise lacks (the SF `parts_information`/`awaiting_parts_date` fields above are truck-level
+  // text/dates, NOT the child back-order rows fcr-parts manages). It powers the fcr-parts "Waiting on Parts"
+  // list view (`open_backorder_parts >= 1`) and preserves the open-parts badge the app's bespoke list showed.
+  // BARE scalar subquery — the reports engine parenthesizes a computed `expr` once, so it composes correctly in
+  // both SELECT (`(…) AS open_backorder_parts`) and WHERE (`(…) >= 1`). filterable (computed default). NOT
+  // summable: it is a per-truck open count; a cross-truck SUM isn't a current need (computed default = false).
+  // The `all_parts_received_date IS NULL AND deleted_at IS NULL` predicate matches the app's own "open" test.
+  computed("number", "open_backorder_parts", "Open parts", "status",
+    `SELECT count(*) FROM fcr_core.truck_backorder_part bop WHERE bop.unit_number = truck.sf_id AND bop.deleted_at IS NULL AND bop.all_parts_received_date IS NULL`),
   dateF("repair_start_date", "Repair started", "status"),
   dateF("repair_goal", "Repair goal", "status"),
   str("repair_notes", "Repair notes", "status"),

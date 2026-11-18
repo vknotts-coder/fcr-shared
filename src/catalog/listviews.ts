@@ -77,6 +77,9 @@ const TRUCK_COLS = ["sf_name", "vin", "status", "shop", "pickup_tow_drive", "del
 // Truck "Repair Pipeline" columns (parity with TRAILER_PIPELINE_COLS, adapted to the truck schema: truck has
 // no `type`/`team`, so shop + team_leader stand in). Requires the computed day-count fields (truck.ts).
 const TRUCK_PIPELINE_COLS = ["sf_name", "customer_name", "status", "days_in_status", "shop", "team_leader", "invoice_1", "days_past_due"];
+// Truck "Waiting on Parts" columns — the parts-team orientation (fcr-parts). Leads with the open-part count,
+// then the SF truck-level parts signals (info / ETA / awaiting-since) so Fred sees why a truck is held.
+const TRUCK_PARTS_COLS = ["sf_name", "status", "open_backorder_parts", "shop", "parts_information", "parts_eta_date", "awaiting_parts_date", "customer_name"];
 // Truck WIP columns (truck has no completetion_percentage/labor column; show shop + the repair-stage dates).
 const TRUCK_WIP_COLS = ["sf_name", "vin", "notify_date", "status", "shop", "repair_start_date", "repair_completion_date", "invoice_date"];
 // Truck pre-repair scheduling queue (mirrors the trailer scheduling preset, adapted to the truck picklist —
@@ -182,6 +185,20 @@ const TRUCK_VIEWS: ListView[] = [
     columns: TRUCK_PIPELINE_COLS,
     defaultSort: sort("days_past_due", "desc"),
     filters: [gte("days_past_due", "30")],
+    filterLogic: null,
+  },
+  // ── Parts-team view (fcr-parts). Trucks with at least one OPEN back-order part, via the computed
+  // `open_backorder_parts` count field (truck.ts). Additive — the views above are untouched; isolation from
+  // existing consumers rides the immutable-SHA tarball pin. fcr-parts defaults its /trucks to this view.
+  {
+    slug: "waiting_parts",
+    object: "truck",
+    label: "Waiting on Parts",
+    group: "overview",
+    description: "Trucks with at least one open back-order part (not yet fully received).",
+    columns: TRUCK_PARTS_COLS,
+    defaultSort: sort("open_backorder_parts", "desc"),
+    filters: [gte("open_backorder_parts", "1")],
     filterLogic: null,
   },
 ];

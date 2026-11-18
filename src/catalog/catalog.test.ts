@@ -220,11 +220,27 @@ describe("trailer object", () => {
 
 describe("list views", () => {
   it("has the truck + trailer + donor views", () => {
-    expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due"]);
+    expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due", "waiting_parts"]);
     expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "stuck_on_parts", "wip", "to_invoice", "past_due"]);
     expect(listViewsForObject("donor").map((v) => v.slug)).toEqual(["fleet", "money"]);
-    expect(LIST_VIEWS).toHaveLength(15);
+    expect(LIST_VIEWS).toHaveLength(16);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
+  });
+
+  it("the truck 'Waiting on Parts' view filters on the open_backorder_parts count field", () => {
+    const wp = getListView("truck", "waiting_parts")!;
+    expect(wp.label).toBe("Waiting on Parts");
+    // Filters to trucks with >= 1 open back-order part (count > 0), via the computed field.
+    expect(wp.filters).toEqual([{ field: "open_backorder_parts", op: "gte", value: "1" }]);
+    expect(wp.defaultSort).toEqual({ field: "open_backorder_parts", dir: "desc" });
+    // open_backorder_parts must be a real, filterable computed field on the truck object (else the view 500s).
+    const field = truckFields.find((f) => f.key === "open_backorder_parts");
+    expect(field).toBeDefined();
+    expect(field!.filterable).toBe(true);
+    expect(field!.expr).toContain("truck_backorder_part");
+    // Every column the view lists must resolve to a real truck field (a stray key renders a blank column).
+    const keys = new Set(truckFields.map((f) => f.key));
+    for (const col of wp.columns) expect(keys.has(col)).toBe(true);
   });
 
   it("resolveStatus guards a crafted param to a real option", () => {
