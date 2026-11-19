@@ -75,16 +75,18 @@ export const TRUCK_FORM_FIELDS = [
     { column: "pickup_zip_code", label: "Pickup ZIP", section: "incoming_transport", input: "text" },
     { column: "pickup_tow_drive", label: "Pickup Mode", section: "incoming_transport", input: "select", options: ["", ...PICKUP_MODES] },
     { column: "pickup_notes", label: "Pickup Notes", section: "incoming_transport", input: "textarea" },
-    // Invoice / Rework — SF-parity invoice numbers + the rework flag, in the SF page-layout sections. These
-    // reverse-sync Core→SF field-scoped via fcr-dispatch TRUCK_EDIT_COLS (invoice_1-4 + rework, added in #391);
-    // updateUnit records whichever of them actually changed into dispatch_dirty_cols, so the push sends only the
-    // edited field. invoice_* are free-text numbers; rework is a Yes/No boolean (coerced via TRUCK_BOOL_COLS).
-    // epic fcr-estimating#28 Slice B.
+    // Invoice / Rework — SF-parity invoice numbers + the rework flag + rework notes, in the SF page-layout
+    // sections. These reverse-sync Core→SF field-scoped via fcr-dispatch TRUCK_EDIT_COLS (invoice_1-4 + rework
+    // added in #391; rework_notes added in the manager S2.1 slice → Rework_Notes__c); updateUnit records
+    // whichever of them actually changed into dispatch_dirty_cols, so the push sends only the edited field.
+    // invoice_* are free-text numbers; rework is a Yes/No boolean (coerced via TRUCK_BOOL_COLS); rework_notes is
+    // free text. epic fcr-estimating#28 Slice B.
     { column: "invoice_1", label: "Invoice #1", section: "invoice", input: "text" },
     { column: "invoice_2", label: "Invoice #2", section: "invoice", input: "text" },
     { column: "invoice_3", label: "Invoice #3", section: "invoice", input: "text" },
     { column: "invoice_4", label: "Invoice #4", section: "invoice", input: "text" },
     { column: "rework", label: "Rework?", section: "rework", input: "select", options: ["", ...YES_NO] },
+    { column: "rework_notes", label: "Rework Notes", section: "rework", input: "textarea" },
     // Estimate Information (epic fcr-estimating#60 S2) — the estimating department's day-to-day edit surface.
     // Dates + per-area labor hours + line count + estimate notes + Total Sales. total_sales is editable by the
     // estimating staff who own the figure (money visibility is opened app-side, not gated here). The computed
