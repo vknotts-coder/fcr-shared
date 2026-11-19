@@ -167,6 +167,22 @@ const TRUCK_VIEWS = [
         filters: [gte("open_backorder_parts", "1")],
         filterLogic: null,
     },
+    {
+        slug: "stuck_on_parts",
+        object: "truck",
+        label: "Stuck on Parts (20+ days)",
+        group: "overview",
+        // Trucks with a back-order part open 20+ days — the long-waiters. Unlike trailers (which track "awaiting
+        // parts" as a STATUS + status_date), trucks have child back-order rows with their own created_at, so this
+        // counts open parts aged 20+ days via the stuck_backorder_parts computed field (same age rule as the parts
+        // "Aging / stuck parts" report). Slug matches the trailer view's, but slugs are unique PER object.
+        description: "Trucks with a back-order part open 20 or more days.",
+        // Lead with the stuck count (the sort field must be a selected column) alongside the open count.
+        columns: ["sf_name", "status", "stuck_backorder_parts", "open_backorder_parts", "shop", "parts_eta_date", "awaiting_parts_date", "customer_name"],
+        defaultSort: sort("stuck_backorder_parts", "desc"),
+        filters: [gte("stuck_backorder_parts", "1")],
+        filterLogic: null,
+    },
 ];
 const TRAILER_VIEWS = [
     {
