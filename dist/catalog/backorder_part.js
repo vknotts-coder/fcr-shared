@@ -40,7 +40,10 @@ export const backorderPartFields = [
     // "today"); the tz basis matches every other now()-relative field. Qualify columns with the base alias.
     computed("boolean", "is_overdue", "Overdue", "ordering", `(backorder_part.all_parts_received_date IS NULL AND backorder_part.estimated_arrival_date IS NOT NULL AND backorder_part.estimated_arrival_date < ${tzToday})`),
     // COMPUTED — days a part has been open (for aging). NULL once received. Display-only (not summable).
-    computed("number", "days_open", "Days open", "status", `CASE WHEN backorder_part.all_parts_received_date IS NULL THEN (${tzToday} - backorder_part.created_at::date) END`),
+    // created_at is timestamptz; a bare ::date would cast in the DB session TZ (UTC on Vercel), undercounting by
+    // one for a part created in the Chicago evening. Normalize to America/Chicago first so the day-count matches
+    // tzToday's basis (number computed fields get no runner-side AT TIME ZONE, unlike date-typed fields).
+    computed("number", "days_open", "Days open", "status", `CASE WHEN backorder_part.all_parts_received_date IS NULL THEN (${tzToday} - (backorder_part.created_at AT TIME ZONE 'America/Chicago')::date) END`),
 ];
 export function backorderPartObject(opts) {
     return {
@@ -48,11 +51,13 @@ export function backorderPartObject(opts) {
         label: "Back-order parts",
         description: "Truck back-order parts — ordering, ETA, and receipt. The fcr-parts lane. View-only.",
         table: "fcr_core.truck_backorder_part",
-        // truck.sf_id is the SF id this part links to; UNIQUE (truck_backorder_part_sf_id_key is on the part, and
-        // truck.sf_id is unique), so one-to-one — no row multiplication. Deleted/test trucks excluded in the ON.
-        join: { alias: "truck", sql: "LEFT JOIN fcr_core.truck truck ON truck.sf_id = backorder_part.unit_number AND truck.deleted_at IS NULL AND truck.is_test = false" },
-        // Keep a part whose linked truck is a test truck OUT (parity with the truck baseWhere is_test = false),
-        // but keep an UNLINKED part (no matching truck → truck.id IS NULL) visible.
+        // truck.sf_id is the SF id this part links to; UNIQUE (truck.sf_id), so one-to-one — no row multiplication.
+        // The join excludes only DELETED trucks; is_test is handled in baseWhere, NOT here. (If is_test = false sat
+        // in the ON, a test-truck part would find no join row → truck.id IS NULL → baseWhere's `truck.id IS NULL`
+        // disjunct would KEEP it, making the test exclusion a dead tautology — so a test truck must JOIN to be caught.)
+        join: { alias: "truck", sql: "LEFT JOIN fcr_core.truck truck ON truck.sf_id = backorder_part.unit_number AND truck.deleted_at IS NULL" },
+        // Drop a part whose linked truck is a test truck (it joins → truck.is_test = true → excluded), but keep an
+        // UNLINKED part (no matching truck → truck.id IS NULL) visible. Parity with the truck baseWhere is_test=false.
         baseWhere: "backorder_part.deleted_at IS NULL AND (truck.id IS NULL OR truck.is_test = false)",
         capability: opts.capability,
         ownerField: opts.ownerField ?? null,
