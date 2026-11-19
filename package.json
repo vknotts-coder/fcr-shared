@@ -58,6 +58,10 @@
       "types": "./dist/catalog/donor.d.ts",
       "default": "./dist/catalog/donor.js"
     },
+    "./catalog/backorder_part": {
+      "types": "./dist/catalog/backorder_part.d.ts",
+      "default": "./dist/catalog/backorder_part.js"
+    },
     "./catalog/listviews": {
       "types": "./dist/catalog/listviews.d.ts",
       "default": "./dist/catalog/listviews.js"
