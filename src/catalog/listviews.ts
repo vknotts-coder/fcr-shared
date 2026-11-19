@@ -18,7 +18,7 @@ import type { ReportDefinition, ReportFilter, ReportSort } from "../reports/defi
 // Status dropdown options = the canonical pipeline-order arrays (single source of truth, also the sort rank).
 import { TRAILER_STATUS_ORDER as TRAILER_STATUSES, TRUCK_STATUS_ORDER as TRUCK_STATUSES, DONOR_STATUS_LABEL_ORDER } from "./status-order.js";
 
-export type ListViewObject = "truck" | "trailer" | "donor";
+export type ListViewObject = "truck" | "trailer" | "donor" | "backorder_part";
 export type ListViewGroup = "overview" | "location";
 
 /** A user-selectable status dropdown on a view: `options` are the individual statuses (the full SF
@@ -319,7 +319,85 @@ const DONOR_VIEWS: ListView[] = [
   },
 ];
 
-export const LIST_VIEWS: ListView[] = [...TRUCK_VIEWS, ...TRAILER_VIEWS, ...DONOR_VIEWS];
+// ── Back-order parts (fcr-parts epic #18 S2) ─────────────────────────────────────────────────────────
+// Views over the `backorder_part` object (truck_backorder_part). No SF status picklist on this object, so
+// these are plain-filter views (like the donor Money view), not status-selectable. "Open" = not yet fully
+// received (all_parts_received_date IS NULL). Default = Open Orders (the active parts queue). Columns lead
+// with the truck name + the two part slots.
+const BACKORDER_PART_COLS = [
+  "truck_name", "part_1", "part_1_description", "part_2", "part_2_description",
+  "po_number", "estimated_arrival_date", "parts_in_stock_yes_no", "all_parts_received_date", "created_at",
+];
+
+const BACKORDER_PART_VIEWS: ListView[] = [
+  {
+    slug: "open",
+    object: "backorder_part",
+    label: "Open Orders",
+    group: "overview",
+    description: "Parts not yet fully received — the active back-order queue. Oldest first.",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("created_at", "asc"),
+    filters: [isNull("all_parts_received_date")],
+    filterLogic: "1",
+  },
+  {
+    slug: "awaiting_po",
+    object: "backorder_part",
+    label: "Awaiting PO",
+    group: "overview",
+    description: "Open parts with no PO number yet — need ordering.",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("created_at", "asc"),
+    filters: [isNull("all_parts_received_date"), isNull("po_number")],
+    filterLogic: "1 AND 2",
+  },
+  {
+    slug: "on_order",
+    object: "backorder_part",
+    label: "On Order",
+    group: "overview",
+    description: "Open parts that have a PO number — ordered, awaiting arrival.",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("estimated_arrival_date", "asc"),
+    filters: [isNull("all_parts_received_date"), notNull("po_number")],
+    filterLogic: "1 AND 2",
+  },
+  {
+    slug: "overdue",
+    object: "backorder_part",
+    label: "Overdue ETA",
+    group: "overview",
+    description: "Open parts whose estimated arrival date has passed. Most overdue first.",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("estimated_arrival_date", "asc"),
+    // is_overdue is the computed boolean (open AND eta < today) — filter values can't hold "today".
+    filters: [eq("is_overdue", "true")],
+    filterLogic: "1",
+  },
+  {
+    slug: "received",
+    object: "backorder_part",
+    label: "Received",
+    group: "overview",
+    description: "Parts marked fully received. Most recently received first.",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("all_parts_received_date", "desc"),
+    filters: [notNull("all_parts_received_date")],
+    filterLogic: "1",
+  },
+  {
+    slug: "all",
+    object: "backorder_part",
+    label: "All Parts",
+    group: "overview",
+    description: "Every back-order part (open and received).",
+    columns: BACKORDER_PART_COLS,
+    defaultSort: sort("created_at", "desc"),
+  },
+];
+
+export const LIST_VIEWS: ListView[] = [...TRUCK_VIEWS, ...TRAILER_VIEWS, ...DONOR_VIEWS, ...BACKORDER_PART_VIEWS];
 
 // ── Lookups ────────────────────────────────────────────────────────────────────────────────────────
 

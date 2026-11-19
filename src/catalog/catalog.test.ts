@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { truckObject, truckFields } from "./truck.js";
 import { trailerObject, trailerFields } from "./trailer.js";
 import { donorObject, donorFields } from "./donor.js";
+import { backorderPartObject } from "./backorder_part.js";
 import { LIST_VIEWS, getListView, listViewsForObject, resolveSort, resolveStatus, listViewDefinition } from "./listviews.js";
 import { statusRankExpr, TRAILER_STATUS_ORDER, TRUCK_STATUS_ORDER } from "./status-order.js";
 import { toClientObject } from "../reports/registry-core.js";
@@ -223,7 +224,8 @@ describe("list views", () => {
     expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due", "waiting_parts"]);
     expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "stuck_on_parts", "wip", "to_invoice", "past_due"]);
     expect(listViewsForObject("donor").map((v) => v.slug)).toEqual(["fleet", "money"]);
-    expect(LIST_VIEWS).toHaveLength(16);
+    expect(listViewsForObject("backorder_part").map((v) => v.slug)).toEqual(["open", "awaiting_po", "on_order", "overdue", "received", "all"]);
+    expect(LIST_VIEWS).toHaveLength(22);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
   });
 
@@ -316,7 +318,10 @@ describe("list views", () => {
   // field, which a raw `.filters` deep-equal does NOT. (The `in`-operator break shipped past shape tests.)
   it("EVERY list view produces a definition that validateDefinition accepts", () => {
     const objFor = (o: string) =>
-      o === "truck" ? truckObject({ capability: allow }) : o === "donor" ? donorObject({ capability: allow }) : trailerObject({ capability: allow });
+      o === "truck" ? truckObject({ capability: allow })
+      : o === "donor" ? donorObject({ capability: allow })
+      : o === "backorder_part" ? backorderPartObject({ capability: allow })
+      : trailerObject({ capability: allow });
     for (const view of LIST_VIEWS) {
       const client = toClientObject(objFor(view.object), admin);
       const modes = view.statusSelect

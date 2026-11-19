@@ -7,4 +7,5 @@
 export { truckObject, truckFields } from "./truck.js";
 export { trailerObject, trailerFields } from "./trailer.js";
 export { donorObject, donorFields } from "./donor.js";
+export { backorderPartObject, backorderPartFields } from "./backorder_part.js";
 export * from "./listviews.js";
