@@ -79,6 +79,12 @@ export const truckFields = [
     // summable: it is a per-truck open count; a cross-truck SUM isn't a current need (computed default = false).
     // The `all_parts_received_date IS NULL AND deleted_at IS NULL` predicate matches the app's own "open" test.
     computed("number", "open_backorder_parts", "Open parts", "status", `SELECT count(*) FROM fcr_core.truck_backorder_part bop WHERE bop.unit_number = truck.sf_id AND bop.deleted_at IS NULL AND bop.all_parts_received_date IS NULL`),
+    // Open back-order parts that have been open 20+ days — the "stuck" signal (a truck that's been waiting on a
+    // part too long). Same correlated-count shape as open_backorder_parts, with the age predicate matching the
+    // fcr-parts "Aging / stuck parts" report's days_open >= 20 definition exactly: created_at (timestamptz)
+    // normalized to the Chicago calendar date before the day-diff, so an evening-created row isn't off by one.
+    // Powers the "Stuck on Parts (20+ days)" truck list view (`stuck_backorder_parts >= 1`).
+    computed("number", "stuck_backorder_parts", "Stuck parts (20+d)", "status", `SELECT count(*) FROM fcr_core.truck_backorder_part bop WHERE bop.unit_number = truck.sf_id AND bop.deleted_at IS NULL AND bop.all_parts_received_date IS NULL AND (timezone('America/Chicago', now())::date - (bop.created_at AT TIME ZONE 'America/Chicago')::date) >= 20`),
     dateF("repair_start_date", "Repair started", "status"),
     dateF("repair_goal", "Repair goal", "status"),
     str("repair_notes", "Repair notes", "status"),

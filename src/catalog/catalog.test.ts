@@ -221,11 +221,11 @@ describe("trailer object", () => {
 
 describe("list views", () => {
   it("has the truck + trailer + donor views", () => {
-    expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due", "waiting_parts"]);
+    expect(listViewsForObject("truck").map((v) => v.slug)).toEqual(["all", "livingston", "sparta", "scheduling", "wip", "to_invoice", "past_due", "waiting_parts", "stuck_on_parts"]);
     expect(listViewsForObject("trailer").map((v) => v.slug)).toEqual(["trailers", "scheduling", "stuck_on_parts", "wip", "to_invoice", "past_due"]);
     expect(listViewsForObject("donor").map((v) => v.slug)).toEqual(["fleet", "money"]);
     expect(listViewsForObject("backorder_part").map((v) => v.slug)).toEqual(["open", "awaiting_po", "on_order", "overdue", "received", "all"]);
-    expect(LIST_VIEWS).toHaveLength(22);
+    expect(LIST_VIEWS).toHaveLength(23);
     expect(getListView("truck", "livingston")?.locationFilter).toEqual({ field: "shop", op: "eq", value: "Livingston" });
   });
 
