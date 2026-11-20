@@ -1,7 +1,10 @@
-// Saved custom-report persistence (#43 Slice 1). Per-user create/list/get/delete over fcr_core.saved_report
-// with a dedupe-on-(owner,name,object) upsert + prune-to-cap guard. The stored `definition` is a validated
-// ReportDefinition (jsonb) — validation happens in the action/runner against the viewer's registry, so a
-// stale/invalid stored definition simply fails to run rather than corrupting anything.
+// Saved custom-report persistence (#43 Slice 1; identity-keyed since #66). Per-user create/list/get/delete
+// over fcr_core.saved_report with a prune-to-cap guard. Writes are keyed on IDENTITY: an `id` updates that
+// owned row in place, no id inserts a NEW row — a create under an existing (name, object) raises
+// `SavedReportNameConflictError` (the partial-unique index) instead of silently name-upserting over it. The
+// stored `definition` is a validated ReportDefinition (jsonb) — validation happens in the action/runner
+// against the viewer's registry, so a stale/invalid stored definition simply fails to run rather than
+// corrupting anything.
 //
 // `shared` is share-ready plumbing: v1 always writes personal (shared=false). list/get already surface
 // shared rows so an admin-published-report slice needs no data-layer change — only a write path that flips
