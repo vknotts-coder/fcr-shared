@@ -14,8 +14,10 @@ import { str, computed } from "./fields.js";
 // "Photo Estimate - Awaiting Approval" value (present on live records, absent from the active picklist).
 // These were previously duplicated as TRUCK_STATUSES / TRAILER_STATUSES in listviews.ts; consolidated here
 // so the dropdown options and the sort rank can never drift apart.
+// "Customer Drop Off" added to the truck Status__c picklist 2026-11-24 (customer brings the truck in; same
+// inbound stage as Awaiting Pickup) — was previously unsyncable; the trailer picklist already carried it.
 export const TRUCK_STATUS_ORDER: string[] = [
-  "Awaiting Pickup Info", "Awaiting Pickup", "Pickup (Dispatch)", "Estimating", "Awaiting Approval",
+  "Awaiting Pickup Info", "Awaiting Pickup", "Customer Drop Off", "Pickup (Dispatch)", "Estimating", "Awaiting Approval",
   "Photo Estimate - Awaiting Approval", "Approved", "Awaiting Parts", "Awaiting Repair Start",
   "Repair in Progress", "Complete", "Awaiting Delivery", "Awaiting Customer Pickup", "Delivery (Dispatch)",
   "Delivered", "Hold", "Awaiting TL Confirmation", "LEGAL HOLD", "Total Loss", "Donor", "Sold - Total Loss",
